@@ -1,0 +1,117 @@
+From 8a6bc84761ab8d177e6506339951d33255bd30f2 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:28:55 -0400
+Subject: [PATCH 4/6] kgdboc: retry binding the tty, and add kgdb_break_after=
+
+kgdboc binds its tty through deferred probe, which can stay pending when
+the tty is a USB gadget port that appears after the last driver probe.
+Then kgdb never gets its I/O driver.
+
+Retry the binding from a work item, every second for up to 100 s after
+kgdboc initialises, and log when it binds. It only runs when kgdboc= is
+set.
+
+Also add kgdb_break_after=<seconds>, which stops the kernel in kgdb that
+many seconds after boot, once the tty is bound: an unclaimed breakpoint
+would oops. It is a way in at a fixed time with nothing sent from the
+host. It clears dbg_kdb_mode first, so the trap enters the gdb stub
+rather than the kdb shell.
+
+Without kgdb_break_after= the kernel is never stopped by this patch.
+---
+ drivers/tty/serial/kgdboc.c | 71 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 70 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/tty/serial/kgdboc.c b/drivers/tty/serial/kgdboc.c
+index 86433e3c3..9defe09ed 100644
+--- a/drivers/tty/serial/kgdboc.c
++++ b/drivers/tty/serial/kgdboc.c
+@@ -280,6 +280,70 @@ static struct platform_driver kgdboc_platform_driver = {
+ 	},
+ };
+ 
++/*
++ * kgdboc binds its tty through deferred probe, which can stay pending if
++ * the tty, here a USB gadget port, appears after the last probe. So retry
++ * the binding from a work item, every second for up to 100 s.
++ *
++ * kgdb_break_after=<seconds> also stops the kernel in kgdb that many
++ * seconds after boot, once the tty is bound: an unclaimed breakpoint is a
++ * fatal oops. It is a way in at a fixed time, without anything sent from
++ * the host.
++ */
++extern int dbg_kdb_mode;	/* kernel/debug/debug_core.h is private */
++
++static int kgdboc_break_after;
++static unsigned long kgdboc_break_at;
++
++static int __init kgdboc_break_after_setup(char *str)
++{
++	if (kstrtoint(str, 10, &kgdboc_break_after))
++		kgdboc_break_after = 0;
++	return 1;
++}
++__setup("kgdb_break_after=", kgdboc_break_after_setup);
++
++static void kgdboc_late_fn(struct work_struct *work);
++static DECLARE_DELAYED_WORK(kgdboc_late_work, kgdboc_late_fn);
++
++static void kgdboc_late_fn(struct work_struct *work)
++{
++	static bool bound;
++	static int tries;
++
++	mutex_lock(&config_mutex);
++	if (configured != 1)
++		configure_kgdboc();
++	mutex_unlock(&config_mutex);
++
++	if (configured != 1) {
++		if (++tries < 100)
++			schedule_delayed_work(&kgdboc_late_work, HZ);
++		else
++			pr_warn("kgdboc: %s never bound\n", config);
++		return;
++	}
++	if (!bound) {
++		pr_info("kgdboc: bound to %s\n", config);
++		bound = true;
++	}
++
++	if (kgdboc_break_after <= 0)
++		return;
++	if (time_before(jiffies, kgdboc_break_at)) {
++		schedule_delayed_work(&kgdboc_late_work,
++				      kgdboc_break_at - jiffies);
++		return;
++	}
++
++	/* Enter the gdb stub, not the kdb shell gdb cannot talk to. */
++	if (IS_ENABLED(CONFIG_KGDB_KDB))
++		dbg_kdb_mode = 0;
++
++	pr_info("kgdboc: kgdb_break_after: trapping into kgdb\n");
++	kgdb_breakpoint();
++}
++
+ static int __init init_kgdboc(void)
+ {
+ 	int ret;
+@@ -305,8 +369,13 @@ static int __init init_kgdboc(void)
+ 	}
+ 
+ 	ret = platform_device_add(kgdboc_pdev);
+-	if (!ret)
++	if (!ret) {
++		if (config[0]) {
++			kgdboc_break_at = jiffies + kgdboc_break_after * HZ;
++			schedule_delayed_work(&kgdboc_late_work, HZ);
++		}
+ 		return 0;
++	}
+ 
+ 	platform_device_put(kgdboc_pdev);
+ 
+-- 
+2.53.0
+

@@ -1,7 +1,7 @@
-From b423470bb65953df15af15671c05d53e208dd422 Mon Sep 17 00:00:00 2001
+From c164362ae9135fefaaed16352113ef0f99fe4b42 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sat, 10 Oct 2026 23:33:36 -0400
-Subject: [PATCH 5/5] scripts/gdb: symbols: use a raw string for the module
+Subject: [PATCH 5/6] scripts/gdb: symbols: use a raw string for the module
  pattern
 
 "\." in a normal string literal is an invalid escape sequence. Python

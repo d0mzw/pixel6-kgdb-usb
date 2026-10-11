@@ -1,7 +1,7 @@
-From 3f4ff970995edf13d798e1387050509c3a641574 Mon Sep 17 00:00:00 2001
+From be7dc55cca154fa3f215e52c2568be9fab7c09c4 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sun, 11 Oct 2026 02:20:25 -0400
-Subject: [PATCH 3/5] usb: gadget: configfs: add a CDC-ACM port for kgdb with
+Subject: [PATCH 3/6] usb: gadget: configfs: add a CDC-ACM port for kgdb with
  kgdb_acm
 
 kgdboc needs a USB serial port in the active gadget configuration. On

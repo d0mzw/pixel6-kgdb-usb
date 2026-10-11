@@ -19,7 +19,7 @@ You need:
 - About 25 GB of free disk: 13 GB for the kernel source and its build output, 7 GB for the factory image and its unpacked copy, and room for the images to flash.
 - A few minutes per build. A full build took about 4.5 minutes on a 32-thread Intel Core i9-13980HX with 184 GB of RAM.
 
-While the debug kernel is installed, the phone is not for everyday use: it stops in the debugger about 90 seconds after every boot and stays frozen until `gdb` resumes it, and its watchdogs can no longer recover it from a real hang. Flash the factory image to go back.
+While the debug kernel is installed, the phone is not for everyday use: anything that writes to its kgdb serial port can stop it in the debugger, and its watchdogs can no longer recover it from a real hang. Flash the factory image to go back.
 
 ## Layout
 
@@ -327,8 +327,9 @@ Each patch belongs to one project inside `kernel/` and is stored under the same 
 | `aosp` | [0001](docs/aosp/0001-usb-gadget-add-a-polled-mode-implemented-for-dwc3.md) | Lets the USB controller be driven without interrupts |
 | `aosp` | [0002](docs/aosp/0002-usb-gadget-u_serial-add-polled-I-O-for-kgdboc.md) | Polled I/O on the USB serial port, for kgdboc |
 | `aosp` | [0003](docs/aosp/0003-usb-gadget-configfs-add-a-CDC-ACM-port-for-kgdb-with.md) | `kgdb_acm`: adds the USB serial port without root |
-| `aosp` | [0004](docs/aosp/0004-kgdboc-add-kgdb_break_after-to-trap-into-kgdb-after-.md) | `kgdb_break_after=`: stops in kgdb after boot |
+| `aosp` | [0004](docs/aosp/0004-kgdboc-retry-binding-the-tty-and-add-kgdb_break_afte.md) | Binds kgdb to the USB serial port once it appears; optional `kgdb_break_after=` |
 | `aosp` | [0005](docs/aosp/0005-scripts-gdb-symbols-use-a-raw-string-for-the-module-.md) | Silences a Python warning in the gdb scripts |
+| `aosp` | [0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md) | Stops the running kernel when gdb connects or sends Ctrl+C |
 | `private/devices/google/gs101` | [0001](docs/private/devices/google/gs101/0001-gs101-dts-keep-the-watchdogs-from-resetting-a-kgdb-s.md) | Device tree: watchdogs do not reset a stopped kernel |
 | `private/google-modules/soc/gs` | [0001](docs/private/google-modules/soc/gs/0001-soc-gs-keep-the-watchdogs-from-resetting-a-kgdb-stop.md) | Watchdog drivers: same, in code |
 
@@ -346,8 +347,9 @@ Starting kgdb: 100% (1/1), done in 0.007s
 Applying: usb: gadget: add a polled mode, implemented for dwc3
 Applying: usb: gadget: u_serial: add polled I/O for kgdboc
 Applying: usb: gadget: configfs: add a CDC-ACM port for kgdb with kgdb_acm
-Applying: kgdboc: add kgdb_break_after= to trap into kgdb after boot
+Applying: kgdboc: retry binding the tty, and add kgdb_break_after=
 Applying: scripts/gdb: symbols: use a raw string for the module pattern
+Applying: usb: gadget: u_serial: break into kgdb when gdb sends to the port
 == build/kernel
 Starting kgdb: 100% (1/1), done in 0.007s
 Applying: kleaf: kgdb: enable kgdb over the USB serial console
@@ -412,18 +414,19 @@ CONFIG_KGDB_KDB=y
 Check that the code from the `aosp` patches is in the kernel:
 
 ```bash
-grep -E ' (dwc3_gadget_poll|gs_poll_init|gs_poll_get_char|gs_poll_put_char|kgdb_acm_setup|kgdboc_break_fn)$' kernel/out/raviole/dist/System.map
+grep -E ' (dwc3_gadget_poll|gs_poll_init|gs_poll_get_char|gs_poll_put_char|gs_poll_break_fn|kgdb_acm_setup|kgdboc_late_fn)$' kernel/out/raviole/dist/System.map
 ```
 
 Expected output:
 
 ```
-ffffffc008873290 t kgdboc_break_fn
-ffffffc008a00804 t dwc3_gadget_poll
-ffffffc008a50f4c t gs_poll_init
-ffffffc008a50ffc t gs_poll_get_char
-ffffffc008a51108 t gs_poll_put_char
-ffffffc009c8d5dc t kgdb_acm_setup
+ffffffc008873290 t kgdboc_late_fn
+ffffffc008a00864 t dwc3_gadget_poll
+ffffffc008a50b14 t gs_poll_break_fn
+ffffffc008a511e4 t gs_poll_init
+ffffffc008a51294 t gs_poll_get_char
+ffffffc008a513d0 t gs_poll_put_char
+ffffffc009c8d5f4 t kgdb_acm_setup
 ```
 
 The build is reproducible, so the addresses match too.
@@ -486,7 +489,8 @@ The debug command line:
 | `arm64.nopauth` | Turn off pointer authentication, so return addresses in backtraces are plain pointers |
 | `kgdb_acm` | Add the USB serial port for kgdb ([aosp 0003](docs/aosp/0003-usb-gadget-configfs-add-a-CDC-ACM-port-for-kgdb-with.md)) |
 | `kgdboc=ttyGS3` | Run kgdb over that port, serial line 3 on this phone |
-| `kgdb_break_after=90` | Stop in kgdb 90 seconds after boot ([aosp 0004](docs/aosp/0004-kgdboc-add-kgdb_break_after-to-trap-into-kgdb-after-.md)) |
+
+To also stop the kernel at a fixed time after every boot, add `kgdb_break_after=<seconds>` to `DEBUG_CMDLINE` in `scripts/package.sh` and package again ([aosp 0004](docs/aosp/0004-kgdboc-retry-binding-the-tty-and-add-kgdb_break_afte.md)). It is not needed to attach: gdb stops the kernel itself.
 
 ## Flash
 
@@ -578,7 +582,7 @@ Expected output:
 6.1.124-android14-11
 ```
 
-About 90 seconds after boot, the kernel stops in kgdb and the phone freezes. That is expected, and it happens on every boot. If kgdboc is slow to bind its port, the stop can come up to 90 seconds later. The next section attaches gdb.
+The phone keeps running normally until gdb attaches. The next section does that.
 
 ## Debug
 
@@ -591,39 +595,40 @@ scripts/kgdb-attach.py
 The script:
 
 1. Checks the host: `adb`, `fastboot` and `gdb-multiarch` are installed, and the build left `vmlinux`, the kernel's gdb scripts and the sources in place.
-2. Checks the phone: it runs the same kernel release as `vmlinux`, and its command line has `kgdb_acm`, `kgdboc=` and `kgdb_break_after=`. If adb does not answer, it waits for a phone that is still booting, and stops with a hint to use `--now` if the kernel already looks stopped.
-3. Reboots the phone and shows a progress bar while Android boots. If the phone stops in the bootloader instead (see [Known issues](#known-issues)), it runs `fastboot reboot`, up to three times.
-4. Shows a second progress bar while the kernel counts down to `kgdb_break_after`, and notices when it stops.
-5. Starts `gdb-multiarch` on `/dev/ttyACM0` with `vmlinux`, the kernel sources and the kernel's gdb helper scripts loaded.
+2. Checks the phone: it runs the same kernel release as `vmlinux`, and its command line has `kgdb_acm` and `kgdboc=`. If adb does not answer, it waits for a phone that is still booting, and stops with a hint to use `--now` if the kernel already looks stopped.
+3. Starts `gdb-multiarch` on `/dev/ttyACM0` with `vmlinux`, the kernel sources and the kernel's gdb helper scripts loaded.
 
-If the kernel has already stopped, `scripts/kgdb-attach.py --now` skips straight to step 5. `--help` lists the other options.
+gdb's first packet stops the running kernel ([aosp 0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md)), so there is nothing to wait for. Once attached, `continue` resumes the phone, and Ctrl+C stops it again.
+
+| Command | What it does |
+| --- | --- |
+| `scripts/kgdb-attach.py` | Stops the running kernel and attaches |
+| `scripts/kgdb-attach.py --boot` | Reboots the phone and stops the kernel as soon as its USB port is up, about 5 seconds into boot. If the phone stops in the bootloader instead (see [Known issues](#known-issues)), it runs `fastboot reboot`, up to three times. |
+| `scripts/kgdb-attach.py --now` | Skips the checks and attaches straight away, for example to a kernel that is already stopped after gdb was closed without detaching |
+
+`--help` lists the other options.
 
 ### A demo session
 
-This session was recorded on the phone, with the host set up as in this README. The progress bars clear themselves when they finish, so they do not appear here.
+This session was recorded on the phone, with the host set up as in this README.
 
-The script's output, up to the moment gdb connects to the stopped kernel:
+The script's output, up to the moment gdb has stopped the running kernel:
 
 ```
-[02:31:01] checking the host
-[02:31:01]   adb: /home/you/platform-tools/adb
-[02:31:01]   fastboot: /home/you/platform-tools/fastboot
-[02:31:01]   gdb-multiarch: /usr/bin/gdb-multiarch
-[02:31:01]   vmlinux: kernel/out/raviole/dist/vmlinux
-[02:31:01]   gdb scripts: kernel/bazel-bin/aosp/kernel_aarch64/gdb_scripts/vmlinux-gdb.py
-[02:31:01]   kernel sources: kernel/aosp
-[02:31:01]   vmlinux release: 6.1.124-android14-11
-[02:31:01] checking the phone
-[02:31:01]   device: oriole
-[02:31:01]   running kernel: 6.1.124-android14-11
-[02:31:01]   kgdboc=ttyGS3, kgdb_break_after=90
-[02:31:01] rebooting the phone
-[02:31:06] phone went down, waiting for Android to boot
-[02:31:23] booted after 17 s
-[02:31:23] phone uptime 5 s, kernel stops at 90 s
-[02:32:58] kernel stopped (noticed at 101 s of uptime)
-[02:32:58] serial port /dev/ttyACM0 is ready
-[02:32:58] starting gdb-multiarch; `continue` or `detach` resumes the phone
+[12:15:06] checking the host
+[12:15:06]   adb: /home/you/platform-tools/adb
+[12:15:06]   fastboot: /home/you/platform-tools/fastboot
+[12:15:06]   gdb-multiarch: /usr/bin/gdb-multiarch
+[12:15:06]   vmlinux: kernel/out/raviole/dist/vmlinux
+[12:15:06]   gdb scripts: kernel/bazel-bin/aosp/kernel_aarch64/gdb_scripts/vmlinux-gdb.py
+[12:15:06]   kernel sources: kernel/aosp
+[12:15:06]   vmlinux release: 6.1.124-android14-11
+[12:15:06] checking the phone
+[12:15:06]   device: oriole
+[12:15:06]   running kernel: 6.1.124-android14-11
+[12:15:06]   kgdboc=ttyGS3
+[12:15:06] serial port /dev/ttyACM0 is ready
+[12:15:06] starting gdb-multiarch; connecting stops the kernel, `continue` or `detach` resumes it, Ctrl+C stops it again
 Reading symbols from /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux...
 The target architecture is set to "aarch64".
 Source directories searched: /home/you/Desktop/pixel6-kgdb-usb/kernel/aosp:$cdir:$cwd
@@ -632,15 +637,16 @@ arch_kgdb_breakpoint () at arch/arm64/include/asm/kgdb.h:21
 21              asm ("brk %0" : : "I" (KGDB_COMPILED_DBG_BRK_IMM));
 ```
 
-`bt` shows how the kernel got here: the work item from `kgdb_break_after` called `kgdb_breakpoint()`.
+`bt` shows how the kernel got here: gdb's first packet arrived on the USB serial port, and a tasklet called `kgdb_breakpoint()` once the USB controller's interrupt handling was done.
 
 ```
-(gdb) bt 4
+(gdb) bt 6
 #0  arch_kgdb_breakpoint () at arch/arm64/include/asm/kgdb.h:21
 #1  kgdb_breakpoint () at kernel/debug/debug_core.c:1221
-#2  0xffffffc0088732f0 in kgdboc_break_fn (work=<optimized out>) at drivers/tty/serial/kgdboc.c:334
-#3  0xffffffc0080da9e8 in process_one_work (worker=worker@entry=0xffffff8002c2c240, work=work@entry=0xffffffc00a1ab770 <kgdboc_break_work>)
-    at kernel/workqueue.c:2299
+#2  0xffffffc008a50b44 in gs_poll_break_fn (t=<optimized out>) at drivers/usb/gadget/function/u_serial.c:928
+#3  0xffffffc0080b88b0 in tasklet_action_common (a=<optimized out>, tl_head=0xffffff89580898c8, softirq_nr=softirq_nr@entry=6) at kernel/softirq.c:853
+#4  0xffffffc0080b84e8 in tasklet_action (a=<optimized out>) at kernel/softirq.c:878
+#5  0xffffffc0080b79dc in handle_softirqs (ksirqd=true) at kernel/softirq.c:617
 (More stack frames follow...)
 ```
 
@@ -651,76 +657,71 @@ Set a breakpoint on a line of kernel source. Line 1339 of `fs/open.c` is in `do_
 Breakpoint 1 at 0xffffffc0083a14d0: file fs/open.c, line 1339.
 (gdb) continue
 Continuing.
-[New Thread 6553]
-[Thread 6401 exited]
-[Thread 3284 exited]
-[Switching to Thread 6553]
+[Thread 3237 exited]
+[Switching to Thread 893]
 
-Thread 4924 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc02276bdf0) at fs/open.c:1339
+Thread 775 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01793bdf0) at fs/open.c:1339
 1339            fd = get_unused_fd_flags(how->flags);
 ```
 
-`[Switching to Thread 6553]` names the thread that hit the breakpoint by its kernel ID. The `4924` in `Thread 4924 hit Breakpoint 1` is gdb's own thread number, not an ID. The `[Thread ... exited]` lines are threads that ended while the kernel ran.
+`[Switching to Thread 893]` names the thread that hit the breakpoint by its kernel ID. The `775` in `Thread 775 hit Breakpoint 1` is gdb's own thread number, not an ID. The `[Thread ... exited]` lines are threads that ended while the kernel ran.
 
 Inspect the stopped kernel. `bt` gives the call stack, `print` reads kernel structures through their types, and `$lx_task_by_pid()`, from the kernel's gdb scripts, finds a thread's `task_struct` by its ID:
 
 ```
 (gdb) bt 3
-#0  do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc02276bdf0) at fs/open.c:1339
-#1  0xffffffc0083a17d8 in do_sys_open (dfd=46727168, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=578207240, mode=<optimized out>)
+#0  do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01793bdf0) at fs/open.c:1339
+#1  0xffffffc0083a17d8 in do_sys_open (dfd=72671232, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=395558408, mode=<optimized out>)
     at fs/open.c:1357
-#2  __do_sys_openat (dfd=46727168, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=<optimized out>, mode=<optimized out>) at fs/open.c:1373
+#2  __do_sys_openat (dfd=72671232, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=<optimized out>, mode=<optimized out>) at fs/open.c:1373
 (More stack frames follow...)
-(gdb) print *tmp
-$1 = {name = 0xffffff8002c90020 "/system/etc/hosts", uptr = 0x7cd0aff0d2 <error: Cannot access memory at address 0x7cd0aff0d2>, refcnt = 1, aname = 0x0,
-  iname = 0xffffff8002c90020 "/system/etc/hosts"}
 (gdb) print tmp->name
-$2 = 0xffffff8002c90020 "/system/etc/hosts"
-(gdb) print $lx_task_by_pid(6553)->comm
-$3 = "Dns_52_10127\000\000\000"
-(gdb) print $lx_task_by_pid(6553)->pid
-$4 = 6553
-(gdb) print $lx_task_by_pid(6553)->real_parent->comm
-$5 = "init", '\000' <repeats 11 times>
+$1 = 0xffffff800454e020 "/sys/class/power_supply/battery/present"
+(gdb) print $lx_task_by_pid(893)->comm
+$2 = "android.hardwar"
+(gdb) print $lx_task_by_pid(893)->real_parent->comm
+$3 = "init", '\000' <repeats 11 times>
 (gdb) print/x how->flags
-$6 = 0xa0000
+$4 = 0xa8000
 ```
 
-`tmp` is the kernel's `struct filename` for the path being opened, `/system/etc/hosts`. `uptr`, the caller's pointer to the same path, cannot be read (see [Things to know](#things-to-know)). Thread 6553 is named `Dns_52_10127`, and its parent process is `init`. `0xa0000` in `how->flags` is `O_LARGEFILE | O_CLOEXEC`, opened read-only. Ignore the `dfd` and `filename` values in frames #1 and #2: in optimised code gdb cannot always recover a caller's arguments, and shows stale values instead.
+`tmp` is the kernel's `struct filename` for the path being opened, here a battery file in sysfs. Thread 893 belongs to one of Android's hardware services, whose name the kernel cuts to 15 characters, and its parent process is `init`. `0xa8000` in `how->flags` is `O_CLOEXEC | O_LARGEFILE | O_NOFOLLOW`, opened read-only. Ignore the `dfd` and `filename` values in frames #1 and #2: in optimised code gdb cannot always recover a caller's arguments, and shows stale values instead.
 
-Read raw memory: the first 32 bytes of the path, then the same address as a string:
-
-```
-(gdb) x/32xb tmp->name
-0xffffff8002c90020:     0x2f    0x73    0x79    0x73    0x74    0x65    0x6d    0x2f
-0xffffff8002c90028:     0x65    0x74    0x63    0x2f    0x68    0x6f    0x73    0x74
-0xffffff8002c90030:     0x73    0x00    0x00    0x00    0x00    0x00    0x00    0x00
-0xffffff8002c90038:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
-(gdb) x/s tmp->name
-0xffffff8002c90020:     "/system/etc/hosts"
-```
-
-Resume again. The breakpoint is still set, so the next `open()` stops the kernel, this time in another thread, `android.bg`:
-
-```
-(gdb) continue
-Continuing.
-[Switching to Thread 2664]
-
-Thread 2042 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01b12bdf0) at fs/open.c:1339
-1339            fd = get_unused_fd_flags(how->flags);
-(gdb) print tmp->name
-$7 = 0xffffff8005a58020 "/data/data/com.google.android.gms/databases"
-(gdb) print $lx_task_by_pid(2664)->comm
-$8 = "android.bg\000\000\000\000\000"
-```
-
-Remove the breakpoint and detach. Detaching resumes the kernel and leaves the phone running normally:
+Delete the breakpoint and resume. The kernel now runs freely until Ctrl+C in gdb stops it:
 
 ```
 (gdb) delete
-(gdb) info breakpoints
-No breakpoints, watchpoints, tracepoints, or catchpoints.
+(gdb) continue
+Continuing.
+^C[Thread 1885 exited]
+[Thread 2911 exited]
+[Thread 3250 exited]
+... 119 more [Thread N exited] lines ...
+[New Thread 6373]
+[New Thread 6375]
+[New Thread 6376]
+[New Thread 6377]
+[New Thread 6382]
+[New Thread 6381]
+[New Thread 6383]
+
+Thread 23 received signal SIGTRAP, Trace/breakpoint trap.
+[Switching to Thread 13]
+kgdb_breakpoint () at kernel/debug/debug_core.c:1221
+1221            arch_kgdb_breakpoint();
+(gdb) bt 4
+#0  kgdb_breakpoint () at kernel/debug/debug_core.c:1221
+#1  0xffffffc008a50b44 in gs_poll_break_fn (t=<optimized out>) at drivers/usb/gadget/function/u_serial.c:928
+#2  0xffffffc0080b88b0 in tasklet_action_common (a=<optimized out>, tl_head=0xffffff89580898c8, softirq_nr=softirq_nr@entry=6) at kernel/softirq.c:853
+#3  0xffffffc0080b84e8 in tasklet_action (a=<optimized out>) at kernel/softirq.c:878
+(More stack frames follow...)
+```
+
+gdb lists every thread that started or ended since the last stop; with the kernel running freely that is a long list, shortened here. The stop comes from the same tasklet as the first one: Ctrl+C sends a single byte, `0x03`, on the serial port.
+
+Detach. Detaching resumes the kernel and leaves the phone running normally:
+
+```
 (gdb) detach
 Detaching from program: /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux, Remote target
 Ending remote debugging.
@@ -730,30 +731,69 @@ Ending remote debugging.
 Quit gdb and check the phone over adb:
 
 ```bash
-adb shell "echo phone alive; uptime; getprop ro.boot.bootreason; uname -r"
+adb shell "echo phone alive; uptime; uname -r"
 ```
 
 ```
 phone alive
- 02:33:29 up 2 min,  0 users,  load average: 8.88, 2.98, 1.08
-reboot
+ 12:15:44 up 1 min,  0 users,  load average: 6.15, 2.38, 0.87
 6.1.124-android14-11
 ```
 
-`up 2 min` means the kernel was never reset: it booted, stopped in kgdb for the session, and carried on. A watchdog reset would also show in the boot reason, as `watchdog`, instead of `reboot`.
+`up 1 min` is counted from the boot before the session: the kernel stopped twice and carried on, and was never reset.
+
+### Attaching at boot
+
+To debug something early in boot, reboot and stop the kernel as soon as the USB port is up:
+
+```bash
+scripts/kgdb-attach.py --boot
+```
+
+```
+[12:19:18] checking the host
+...
+[12:19:18] checking the phone
+[12:19:18]   device: oriole
+[12:19:18]   running kernel: 6.1.124-android14-11
+[12:19:18]   kgdboc=ttyGS3
+[12:19:18] rebooting the phone
+[12:19:23] phone went down, waiting for /dev/ttyACM0
+[12:19:40] /dev/ttyACM0 appeared after 17 s
+[12:19:40] serial port /dev/ttyACM0 is ready
+[12:19:40] starting gdb-multiarch; connecting stops the kernel, `continue` or `detach` resumes it, Ctrl+C stops it again
+Reading symbols from /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux...
+The target architecture is set to "aarch64".
+Source directories searched: /home/you/Desktop/pixel6-kgdb-usb/kernel/aosp:$cdir:$cwd
+Remote debugging using /dev/ttyACM0
+arch_kgdb_breakpoint () at arch/arm64/include/asm/kgdb.h:21
+21              asm ("brk %0" : : "I" (KGDB_COMPILED_DBG_BRK_IMM));
+```
+
+The host checks are the same as above, and left out here. Most of the 17 seconds are the bootloader, including its unlocked-bootloader warning: in test runs that measured it, the kernel was about 5 seconds into boot when it stopped. Set breakpoints, then `continue` to let the boot carry on through them. `detach` lets Android finish booting:
+
+```
+(gdb) detach
+Detaching from program: /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux, Remote target
+Ending remote debugging.
+[Inferior 1 (Remote target) detached]
+```
 
 Addresses, thread IDs and file names differ on every run.
 
 ### Things to know
 
 - **The phone is frozen while the kernel is stopped.** `continue` or `detach` resumes it.
-- **Pointers into a process's memory cannot be read**, like `uptr` above. kgdb reads memory with ordinary kernel loads (`copy_from_kernel_nofault()`), and arm64's Privileged Access Never (`CONFIG_ARM64_PAN`) blocks those from reaching user addresses. Read the kernel's own copy instead, as `tmp` above.
+- **Close gdb with `detach`.** Quitting gdb, or killing it, while the kernel is stopped leaves the phone frozen. Attach again with `scripts/kgdb-attach.py --now` and detach.
+- **Only gdb may open the port.** Any `$` or `0x03` byte sent to `/dev/ttyACM0` stops the kernel ([aosp 0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md#nothing-else-on-the-host-may-write-to-the-port)).
+- **Pointers into a process's memory cannot be read.** kgdb reads memory with ordinary kernel loads (`copy_from_kernel_nofault()`), and arm64's Privileged Access Never (`CONFIG_ARM64_PAN`) blocks those from reaching user addresses. Read the kernel's own copy instead, as `tmp->name` above.
 - **`$lx_current()` does not work** over kgdb on arm64: it needs the `sp_el0` register, which kgdb does not send. Use `$lx_task_by_pid()` with the ID from `[Switching to Thread N]`.
-- **The kernel stops once per boot.** To stop again, run `scripts/kgdb-attach.py`, which reboots.
+- **`lx-dmesg` is slow** once the kernel log has filled up: it reads the whole log over the serial port.
 
 ## Known issues
 
 - **A reboot sometimes ends in the bootloader instead of Android.** It has happened after `fastboot reboot`, after `adb reboot`, and as `fastboot reboot fastboot` failing with `Failed to boot into userspace fastboot`. Running the same command again, sometimes more than once, has always got the phone going. The slot stays healthy (`fastboot getvar all` shows `slot-successful:a:yes`, `slot-unbootable:a:no`), and the failed attempt leaves no boot reason in Android. The cause is not known yet. `scripts/kgdb-attach.py` detects it and runs `fastboot reboot` for you.
+- **Some boots crash about a second in, and the phone restarts by itself.** In testing it was about 1 boot in 6, with the debug kernel from before the break-in patch as well as with this one. `ueventd`, which replays device events early in boot, hits an oops while formatting a device's `SUBSYSTEM=` value: the name it points to is in module memory that is no longer mapped. The next boot is normal, and `adb shell getprop sys.boot.reason` shows `kernel_panic,oops:_fatal_exception`. The module responsible is not known yet. With `scripts/kgdb-attach.py --boot`, such a boot only makes the port take longer to appear, about 35 seconds instead of 17.
 - **A crash reboots the phone instead of stopping in kgdb.** GKI is built with `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so gdb never sees them. See the [Kleaf patch's limits](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#limits).
 
 ## Recovery

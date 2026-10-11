@@ -50,6 +50,8 @@ A timed-out request is not cancelled; it stays queued in the controller and stil
 
 `gs_poll_put_char()` sends one byte as a one-byte transfer. `gs_poll_get_char()` receives a whole packet, up to the endpoint's packet size, and hands it out a byte at a time on later calls before it polls again. With nothing received it returns `NO_POLL_CHAR`, which kgdb treats as "no data yet".
 
+[aosp 0006](0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md) changes the reading side: the OUT request stays queued while the kernel runs too, so that gdb can stop it, and what arrives goes into a buffer that `gs_poll_get_char()` reads from.
+
 ### While disconnected
 
 When the host disconnects, the port loses its USB link. The polled operations then have nothing to transfer, but they keep calling `usb_gadget_poll()`, so that when the cable is plugged back in, the new connection can be processed even with the kernel stopped, and `gserial_connect()` sets the port up again. This has not yet been tested on the phone: unplugging and replugging the cable while the kernel is stopped is still to be tried.

@@ -1,0 +1,239 @@
+From 63acb7dc110eb000fc97979efa91da24d0ab232b Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sun, 11 Oct 2026 07:53:42 -0400
+Subject: [PATCH 6/6] usb: gadget: u_serial: break into kgdb when gdb sends to
+ the port
+
+A kernel running kgdb over a gadget serial port can only be stopped from
+the phone itself: sysrq-g needs root, and a USB serial port has no line
+break to carry it. So gdb on the host cannot stop a running kernel, and
+Ctrl-C in gdb does nothing.
+
+Keep the polled OUT request queued all the time, also while the kernel
+runs, and copy what it receives into a buffer in the port, which
+poll_get_char reads from. While the kernel runs, the completion looks for
+the start of a gdb packet ('$') or gdb's Ctrl-C (0x03). Anything before
+it is dropped. On a match the bytes from there on are kept, and a tasklet
+calls kgdb_breakpoint() once the controller's event handling is done: the
+completion runs in the middle of it, where kgdb cannot be entered. The
+tasklet also clears dbg_kdb_mode, so the trap enters the gdb stub, and
+does nothing if kgdboc has let go of its I/O driver.
+
+So `target remote` from gdb stops a running kernel, and so does Ctrl-C
+after `continue`. On a first connection gdb sends qSupported, which the
+gdb stub answers. With gdb already connected, kgdb reports the stop
+itself.
+
+The buffer holds 4 KB. Bytes that do not fit are dropped, and gdb resends
+a packet whose checksum fails.
+---
+ drivers/usb/gadget/function/u_serial.c | 134 ++++++++++++++++++++-----
+ 1 file changed, 108 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/usb/gadget/function/u_serial.c b/drivers/usb/gadget/function/u_serial.c
+index d2eb45890..6d9823b26 100644
+--- a/drivers/usb/gadget/function/u_serial.c
++++ b/drivers/usb/gadget/function/u_serial.c
+@@ -28,6 +28,8 @@
+ #include <linux/kthread.h>
+ #include <linux/workqueue.h>
+ #include <linux/kfifo.h>
++#include <linux/kgdb.h>
++#include <linux/interrupt.h>
+ 
+ #include "u_serial.h"
+ 
+@@ -134,9 +136,12 @@ struct gs_port {
+ 	/*
+ 	 * Requests for kgdb's polled I/O, kept apart from the normal pools.
+ 	 * They are made again on every connection, so they always match the
+-	 * current endpoints and packet size. The done flags live here, not
++	 * current endpoints and packet size. The done flag lives here, not
+ 	 * on the stack, because a request that times out stays queued and
+ 	 * may complete later.
++	 *
++	 * The OUT request stays queued all the time, also while the kernel
++	 * runs, and its completion copies what arrives into poll_rx_buf.
+ 	 */
+ 	bool			poll_wanted;	/* kgdboc uses this port */
+ 	struct usb_gadget	*poll_gadget;
+@@ -145,11 +150,12 @@ struct gs_port {
+ 	struct usb_request	*poll_tx;
+ 	struct usb_request	*poll_rx;
+ 	volatile int		poll_tx_done;
+-	volatile int		poll_rx_done;
+ 	bool			poll_tx_busy;
+-	bool			poll_rx_busy;
+-	unsigned int		poll_rx_len;
+-	unsigned int		poll_rx_pos;
++	bool			poll_rx_queued;
++	bool			poll_break;	/* break-in scheduled */
++	unsigned int		poll_rx_head;
++	unsigned int		poll_rx_tail;
++	u8			poll_rx_buf[4096];
+ #endif
+ };
+ 
+@@ -891,12 +897,92 @@ static int gs_break_ctl(struct tty_struct *tty, int duration)
+  */
+ 
+ #define GS_POLL_TIMEOUT_US	250000
++#define GS_POLL_RX_SIZE		sizeof_field(struct gs_port, poll_rx_buf)
+ 
+ static void gs_poll_complete(struct usb_ep *ep, struct usb_request *req)
+ {
+ 	*(volatile int *)req->context = 1;
+ }
+ 
++/*
++ * Break-in: while the kernel runs, the OUT request watches the kgdb port.
++ * gdb starts every packet with '$' and sends 0x03 for Ctrl-C, so either
++ * byte stops the kernel in kgdb, and the bytes from there on are kept for
++ * kgdb to read. The stop cannot happen in the completion, which runs in
++ * the middle of the controller's event handling, so a tasklet does it
++ * once the handler is done.
++ */
++extern int dbg_kdb_mode;	/* kernel/debug/debug_core.h is private */
++
++static struct gs_port *gs_poll_break_port;
++
++static void gs_poll_break_fn(struct tasklet_struct *t)
++{
++	struct gs_port *port = gs_poll_break_port;
++
++	/* kgdboc may have let go of the port; a stray trap would oops. */
++	if (dbg_io_ops) {
++		/* Enter the gdb stub, not the kdb shell gdb cannot talk to. */
++		if (IS_ENABLED(CONFIG_KGDB_KDB))
++			dbg_kdb_mode = 0;
++		kgdb_breakpoint();
++	}
++	WRITE_ONCE(port->poll_break, false);
++}
++
++static DECLARE_TASKLET(gs_poll_break_tasklet, gs_poll_break_fn);
++
++static void gs_poll_rx_complete(struct usb_ep *ep, struct usb_request *req);
++
++/* Queue the OUT request. Called with port_lock held, or from kgdb. */
++static void gs_poll_rx_queue(struct gs_port *port)
++{
++	struct usb_request *req = port->poll_rx;
++
++	req->length = port->poll_rx_ep->maxpacket;
++	req->context = port;
++	req->complete = gs_poll_rx_complete;
++	if (!usb_ep_queue(port->poll_rx_ep, req, GFP_ATOMIC))
++		port->poll_rx_queued = true;
++}
++
++static void gs_poll_rx_complete(struct usb_ep *ep, struct usb_request *req)
++{
++	struct gs_port *port = req->context;
++	unsigned int head = port->poll_rx_head;
++	u8 *buf = req->buf;
++	unsigned int i = 0;
++
++	port->poll_rx_queued = false;
++
++	/* Disconnected: gserial_connect() queues a new request. */
++	if (req->status == -ESHUTDOWN || req->status == -ECONNRESET)
++		return;
++	if (req->status)
++		goto requeue;
++
++	if (!in_dbg_master() && !READ_ONCE(port->poll_break)) {
++		while (i < req->actual && buf[i] != '$' && buf[i] != 0x03)
++			i++;
++		if (i == req->actual)
++			goto requeue;
++		WRITE_ONCE(port->poll_break, true);
++		gs_poll_break_port = port;
++		tasklet_schedule(&gs_poll_break_tasklet);
++	}
++
++	/* A full buffer drops bytes; gdb resends a packet that fails. */
++	for (; i < req->actual; i++) {
++		if (head - READ_ONCE(port->poll_rx_tail) >= GS_POLL_RX_SIZE)
++			break;
++		port->poll_rx_buf[head++ % GS_POLL_RX_SIZE] = buf[i];
++	}
++	WRITE_ONCE(port->poll_rx_head, head);
++
++requeue:
++	gs_poll_rx_queue(port);
++}
++
+ /* Called with port_lock held, or from kgdb. */
+ static void gs_poll_free(struct gs_port *port)
+ {
+@@ -934,9 +1020,10 @@ static int gs_poll_alloc(struct gs_port *port)
+ 	port->poll_tx_ep = gser->in;
+ 	port->poll_rx_ep = gser->out;
+ 	port->poll_tx_busy = false;
+-	port->poll_rx_busy = false;
+-	port->poll_rx_len = 0;
+-	port->poll_rx_pos = 0;
++	port->poll_rx_queued = false;
++	port->poll_rx_head = 0;
++	port->poll_rx_tail = 0;
++	gs_poll_rx_queue(port);
+ 	return 0;
+ }
+ 
+@@ -972,7 +1059,7 @@ static int gs_poll_xfer(struct gs_port *port, struct usb_ep *ep,
+ 		if (usb_gadget_poll(port->poll_gadget) == -EOPNOTSUPP)
+ 			return -EOPNOTSUPP;
+ 		/* A reconnect handled by the poll replaces the requests. */
+-		if (req != port->poll_tx && req != port->poll_rx)
++		if (req != port->poll_tx)
+ 			return -ESHUTDOWN;
+ 		udelay(1);
+ 	}
+@@ -1025,31 +1112,26 @@ static int gs_poll_init(struct tty_driver *driver, int line, char *options)
+ 	return status;
+ }
+ 
++/* kgdb calls this in a loop until it gets a character. */
+ static int gs_poll_get_char(struct tty_driver *driver, int line)
+ {
+ 	struct gs_port *port = gs_poll_port(line);
+-	struct usb_request *req;
+-	u8 *buf;
+-	int ret;
++	unsigned int tail;
+ 
+ 	if (!port)
+ 		return NO_POLL_CHAR;
+ 
+-	req = port->poll_rx;
+-	buf = req->buf;
+-	if (port->poll_rx_pos < port->poll_rx_len)
+-		return buf[port->poll_rx_pos++];
+-
+-	if (!port->poll_rx_busy)
+-		req->length = port->poll_rx_ep->maxpacket;
+-	ret = gs_poll_xfer(port, port->poll_rx_ep, req, &port->poll_rx_done,
+-			   &port->poll_rx_busy);
+-	if (ret <= 0)
+-		return NO_POLL_CHAR;
++	if (port->poll_rx_tail == READ_ONCE(port->poll_rx_head)) {
++		if (!port->poll_rx_queued)
++			gs_poll_rx_queue(port);
++		usb_gadget_poll(port->poll_gadget);
++		if (port->poll_rx_tail == READ_ONCE(port->poll_rx_head))
++			return NO_POLL_CHAR;
++	}
+ 
+-	port->poll_rx_len = ret;
+-	port->poll_rx_pos = 1;
+-	return buf[0];
++	tail = port->poll_rx_tail;
++	WRITE_ONCE(port->poll_rx_tail, tail + 1);
++	return port->poll_rx_buf[tail % GS_POLL_RX_SIZE];
+ }
+ 
+ static void gs_poll_put_char(struct tty_driver *driver, int line, char ch)
+-- 
+2.53.0
+

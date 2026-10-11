@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Attach gdb to the Pixel 6 kernel over USB.
 
-By default this reboots the phone, waits for Android to boot, waits for the
-kernel to stop in kgdb (kgdb_break_after= on the kernel command line), and
-then starts gdb-multiarch on the phone's USB serial port with vmlinux, the
-kernel sources and the kernel's gdb scripts loaded.
+This checks the phone and then starts gdb-multiarch on the phone's USB
+serial port with vmlinux, the kernel sources and the kernel's gdb scripts
+loaded. gdb's first packet stops the running kernel in kgdb.
 
-    scripts/kgdb-attach.py          reboot, wait for the trap, attach
-    scripts/kgdb-attach.py --now    the kernel is already stopped; attach
+    scripts/kgdb-attach.py          stop the running kernel and attach
+    scripts/kgdb-attach.py --boot   reboot, attach as soon as the port is up
+    scripts/kgdb-attach.py --now    skip the checks, attach straight away
 
 While the kernel is stopped the phone is frozen. `continue` or `detach` in
-gdb resumes it. If gdb cannot reach it, hold Volume Down + Power for about
-10 seconds to get back to the bootloader.
+gdb resumes it, and Ctrl+C stops it again. If gdb cannot reach it, hold
+Volume Down + Power for about 10 seconds to get back to the bootloader.
 """
 import argparse
 import mmap
@@ -36,10 +36,6 @@ TREE = ROOT / "kernel"
 VMLINUX = TREE / "out/raviole/dist/vmlinux"
 GDB_SCRIPTS = TREE / "bazel-bin/aosp/kernel_aarch64/gdb_scripts/vmlinux-gdb.py"
 SOURCES = TREE / "aosp"
-
-# kgdboc retries binding its tty every 10 s, up to 10 times, before it
-# gives up and does not trap (see docs/aosp/0004-*.md).
-KGDBOC_RETRY_WINDOW = 100
 
 BAR_FORMAT = "{desc}: {percentage:3.0f}%|{bar}| {n:.0f}/{total:.0f} s"
 
@@ -153,7 +149,7 @@ def wait_for_android(timeout):
 
 def check_phone(release, port, timeout):
     """Check the running kernel is the one we have symbols for and that it
-    is set up to trap. Returns kgdb_break_after in seconds."""
+    runs kgdb over USB."""
     log("checking the phone")
     if not alive():
         # A stopped kernel keeps its USB serial port but stops answering
@@ -171,57 +167,66 @@ def check_phone(release, port, timeout):
         fail(f"the phone runs {running} but vmlinux is {release}; "
              "flash the images from this build (README, Flash)")
     cmdline = adb("shell", "cat", "/proc/cmdline") or ""
-    for needed in ("kgdb_acm", "kgdboc=", "kgdb_break_after="):
+    for needed in ("kgdb_acm", "kgdboc="):
         if needed not in cmdline:
             fail(f"{needed} is not on the kernel command line; "
                  "flash vendor_boot from scripts/package.sh")
-    tty = re.search(r"kgdboc=(\S+)", cmdline).group(1)
-    delay = int(re.search(r"kgdb_break_after=(\d+)", cmdline).group(1))
-    log(f"  kgdboc={tty}, kgdb_break_after={delay}")
-    return delay
+    log(f"  kgdboc={re.search(r'kgdboc=(\S+)', cmdline).group(1)}")
+    delay = re.search(r"kgdb_break_after=(\d+)", cmdline)
+    if delay:
+        log(f"  kgdb_break_after={delay.group(1)}: the kernel also stops "
+            "on its own that long after boot")
 
 
-def reboot(timeout):
+def reboot_to_port(port, timeout):
+    """Reboot the phone and wait for its kgdb port to come back, which
+    happens a few seconds into boot, well before Android has booted."""
     log("rebooting the phone")
     if adb("reboot", timeout=20) is None:
         fail("adb reboot failed")
 
     # The phone drops off USB within a few seconds of the reboot command.
     deadline = time.monotonic() + 30
-    while alive():
+    while os.path.exists(port):
         if time.monotonic() > deadline:
-            fail("the phone did not go down after adb reboot")
-        time.sleep(1)
-    log("phone went down, waiting for Android to boot")
-    wait_for_android(timeout)
+            fail(f"{port} did not go away after adb reboot")
+        time.sleep(0.2)
+    log(f"phone went down, waiting for {port}")
 
-
-def wait_for_trap(delay):
-    """Wait until the kernel stops. Progress is the phone's uptime against
-    kgdb_break_after; after that, kgdboc may still be retrying its bind."""
-    uptime = float((adb("shell", "cat", "/proc/uptime") or "0").split()[0])
-    log(f"phone uptime {uptime:.0f} s, kernel stops at {delay} s")
-    limit = delay + KGDBOC_RETRY_WINDOW
-    t0 = time.monotonic() - uptime
-    with tqdm(total=delay, desc="until the kernel stops", bar_format=BAR_FORMAT,
+    start = time.monotonic()
+    retries = 0
+    last_check = start
+    with tqdm(total=timeout, desc="booting", bar_format=BAR_FORMAT,
               leave=False) as bar:
-        noted = False
-        while alive():
-            up = time.monotonic() - t0
-            if up > limit:
+        while not os.path.exists(port):
+            now = time.monotonic()
+            if now - start > timeout:
                 bar.close()
-                fail(f"the kernel did not stop by {limit} s of uptime; kgdboc "
-                     f"never bound its tty. Check `adb logcat -b kernel | grep kgdboc`")
-            # Noticing a frozen phone takes up to one adb timeout, so only
-            # report a delay once kgdboc's first retry is due.
-            if up > delay + 10 and not noted:
-                log("past kgdb_break_after, kgdboc is still binding its tty "
-                    "(retries every 10 s)")
-                noted = True
-            bar.n = min(up, delay)
-            bar.refresh()
-            time.sleep(2)
-    log(f"kernel stopped (noticed at {time.monotonic() - t0:.0f} s of uptime)")
+                fail(f"{port} did not appear within {timeout} s; check the "
+                     "cable, and see README, Recovery")
+            # Some reboots end in the bootloader; see wait_for_android().
+            if now - last_check > 5:
+                last_check = now
+                if in_bootloader():
+                    if retries == BOOTLOADER_RETRIES:
+                        bar.close()
+                        fail(f"the phone is still in the bootloader after "
+                             f"{retries} attempts to boot it; see README, Recovery")
+                    retries += 1
+                    log(f"the phone stopped in the bootloader instead of "
+                        f"booting; running `fastboot reboot` (attempt "
+                        f"{retries} of {BOOTLOADER_RETRIES})")
+                    subprocess.run(["fastboot", "reboot"],
+                                   stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=20)
+                    start = time.monotonic()
+                    bar.reset(total=timeout)
+                    continue
+            if int(now - start) != bar.n:
+                bar.n = min(int(now - start), timeout)
+                bar.refresh()
+            time.sleep(0.05)
+    log(f"{port} appeared after {time.monotonic() - start:.0f} s")
 
 
 def wait_for_port(port, timeout=20):
@@ -239,8 +244,13 @@ def main():
     p = argparse.ArgumentParser(
         description=__doc__.split("\n\n")[0],
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--now", action="store_true",
-                   help="the kernel is already stopped; attach without rebooting")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--boot", action="store_true",
+                      help="reboot the phone and stop the kernel as soon as "
+                           "its USB port is up, early in boot")
+    mode.add_argument("--now", action="store_true",
+                      help="skip the checks and attach straight away, for "
+                           "example to a kernel that is already stopped")
     p.add_argument("--port", default="/dev/ttyACM0",
                    help="host serial port for the phone (default: %(default)s)")
     p.add_argument("--gdb", default="gdb-multiarch",
@@ -252,29 +262,31 @@ def main():
     release = preflight(args)
 
     if args.now:
-        if alive():
-            fail("the kernel is still running, so there is nothing to attach to; "
-                 "run without --now to reboot and wait for the trap")
-        log("the kernel is not responding to adb; assuming it is stopped in kgdb")
+        log("skipping the phone checks")
     else:
-        delay = check_phone(release, args.port, args.boot_timeout)
-        reboot(args.boot_timeout)
-        wait_for_trap(delay)
+        check_phone(release, args.port, args.boot_timeout)
+        if args.boot:
+            reboot_to_port(args.port, args.boot_timeout)
 
     wait_for_port(args.port)
 
+    # gdb's first packet stops the kernel. Right after boot the port can
+    # appear a moment before kgdboc binds to it, and that packet is lost,
+    # so connect with a short timeout, which makes gdb resend it soon.
     gdb = [args.gdb, "-q",
            "-ex", "set confirm off",
            "-ex", "set pagination off",
            "-ex", "set architecture aarch64",
            "-ex", "set serial baud 115200",
-           "-ex", "set remotetimeout 60",
            "-ex", f"directory {SOURCES}",
            "-ex", f"set substitute-path / {SOURCES}/",
            "-ex", f"source {GDB_SCRIPTS}",
+           "-ex", "set remotetimeout 2",
            "-ex", f"target remote {args.port}",
+           "-ex", "set remotetimeout 60",
            str(VMLINUX)]
-    log(f"starting {args.gdb}; `continue` or `detach` resumes the phone")
+    log(f"starting {args.gdb}; connecting stops the kernel, `continue` or "
+        "`detach` resumes it, Ctrl+C stops it again")
     sys.stdout.flush()
     os.execvp(gdb[0], gdb)
 
