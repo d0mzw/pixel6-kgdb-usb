@@ -7,7 +7,8 @@ Patches and scripts to debug the Pixel 6 kernel with `gdb` over the phone's USB 
 | Phone | Pixel 6 (`oriole`) |
 | Android build | `CP1A.260405.005` (Android 16) |
 | Kernel branch | `android-gs-raviole-6.1-android16` |
-| Kernel release | `6.1.124-android14-11` |
+| Stock kernel in that build | `6.1.145-android14-11-gfa1d6308d1fe-ab14691759` |
+| Kernel built from the branch | `6.1.124-android14-11` |
 
 ## Layout
 
@@ -53,12 +54,12 @@ The kernel tree is about 80 git projects managed by `repo`. Initialise it on the
 ```bash
 mkdir -p kernel
 cd kernel
-~/bin/repo init -u https://android.googlesource.com/kernel/manifest -b android-gs-raviole-6.1-android16
-~/bin/repo sync -c -j8 -m "$PWD/../manifest/pinned.xml"
+~/bin/repo init -u https://android.googlesource.com/kernel/manifest -b android-gs-raviole-6.1-android16 --depth=1
+~/bin/repo sync -c --no-tags -j8 -m "$PWD/../manifest/pinned.xml"
 cd ..
 ```
 
-The sync downloads several GB. When it finishes, `kernel/` contains `aosp/`, `build/`, `private/`, `prebuilts/` and `tools/`.
+`--depth=1` fetches only the pinned commit of each project, not its history. Without it the clang prebuilts project alone is well over 36 GB; with it the whole tree is about 10 GB. When it finishes, `kernel/` contains `aosp/`, `build/`, `private/`, `prebuilts/` and `tools/`.
 
 Syncing without `-m` gives you the tip of the branch instead, which may have moved since the patches were made.
 
@@ -77,8 +78,6 @@ cd ..
 
 `sha256sum -c` must print `OK`. The zip is 3.4 GB and unpacks into `factory/oriole-cp1a.260405.005/`.
 
-The phone must run this same build before you flash the patched kernel. If it does not, flash the factory image first with `flash-all.sh` from that folder (this wipes the phone).
-
 ### Unlock the bootloader
 
 Flashing a custom kernel needs an unlocked bootloader. Enable **OEM unlocking** in Developer options, then:
@@ -88,4 +87,65 @@ adb reboot bootloader
 fastboot flashing unlock
 ```
 
-Unlocking wipes the phone.
+Confirm on the phone with the volume keys and the power button. Unlocking wipes the phone.
+
+### Flash the stock build
+
+Start from the exact stock build, so the only change later is the kernel. Put the phone in fastboot mode, either with `adb reboot bootloader` or by holding Volume Down + Power while it boots, then check that the host sees it:
+
+```bash
+fastboot devices
+```
+
+Flash everything with Google's script. `-w` inside it wipes user data:
+
+```bash
+cd factory/oriole-cp1a.260405.005
+./flash-all.sh
+cd ../..
+```
+
+The phone reboots into setup when the script finishes. Skip through setup, then turn on **Developer options** (Settings, About phone, tap **Build number** seven times) and enable **USB debugging**. Accept the authorisation prompt when the host first connects.
+
+### Check the phone
+
+```bash
+adb devices -l
+```
+
+The phone must be listed as `device` with `product:oriole`. Then confirm the build and the kernel:
+
+```bash
+adb shell getprop ro.product.device             # oriole
+adb shell getprop ro.build.id                   # CP1A.260405.005
+adb shell getprop ro.boot.verifiedbootstate     # orange (bootloader unlocked)
+adb shell uname -r                              # 6.1.145-android14-11-gfa1d6308d1fe-ab14691759
+```
+
+`uname -r` is the stock GKI kernel Google ships in this build. The kernel built from the branch is older (`6.1.124`), which is fine: both are `android14-11`, so they share the KMI and the stock vendor modules load on either.
+
+The running kernel's config can be read without root. Run this from the repository root:
+
+```bash
+adb pull /proc/config.gz factory/stock.config.gz
+zgrep CONFIG_KGDB factory/stock.config.gz   # "# CONFIG_KGDB is not set"
+```
+
+Stock has no kgdb, which is what the patches change.
+
+### Inspect the stock kernel without the phone
+
+The same kernel is inside `boot.img` in the factory image. Unpack it with the tools from the synced tree:
+
+```bash
+mkdir -p factory/stock-boot
+cd factory/stock-boot
+unzip -o ../oriole-cp1a.260405.005/image-oriole-cp1a.260405.005.zip boot.img
+python3 ../../kernel/tools/mkbootimg/unpack_bootimg.py --boot_img boot.img --out unpacked
+../../kernel/prebuilts/kernel-build-tools/linux-x86/bin/lz4 -d unpacked/kernel Image
+strings Image | grep -m1 'Linux version'
+sh ../../kernel/aosp/scripts/extract-ikconfig Image > stock.config
+cd ../..
+```
+
+`strings` prints the same `6.1.145-android14-11-gfa1d6308d1fe-ab14691759` as `uname -r`, and `stock.config` is the full config of the stock kernel.
