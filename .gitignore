@@ -1,0 +1,5 @@
+/kernel/
+*.img
+*.zip
+*.lz4
+/factory/

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="aosp" fetch="https://android.googlesource.com/"/>
+  
+  <default remote="aosp" revision="android-gs-raviole-6.1-android16" sync-j="4"/>
+  
+  <project name="kernel/build" path="build/kernel" revision="6483b5a6b74251440b266536c2dbc902a4fa3cf2" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="kleaf/bazel.sh" dest="tools/bazel"/>
+    <linkfile src="build.sh" dest="build/build.sh"/>
+    <linkfile src="build_abi.sh" dest="build/build_abi.sh"/>
+    <linkfile src="build_test.sh" dest="build/build_test.sh"/>
+    <linkfile src="build_utils.sh" dest="build/build_utils.sh"/>
+    <linkfile src="config.sh" dest="build/config.sh"/>
+    <linkfile src="envsetup.sh" dest="build/envsetup.sh"/>
+    <linkfile src="_setup_env.sh" dest="build/_setup_env.sh"/>
+    <linkfile src="multi-switcher.sh" dest="build/multi-switcher.sh"/>
+    <linkfile src="abi" dest="build/abi"/>
+    <linkfile src="static_analysis" dest="build/static_analysis"/>
+  </project>
+  <project name="kernel/common" path="aosp" revision="a4662a84a15f38b99cf597354edccf75988852de" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="build.config.constants" dest="common/build.config.constants"/>
+    <linkfile src="modules.bzl" dest="common/modules.bzl"/>
+  </project>
+  <project name="kernel/configs" revision="10c4b65bd93d4b613b4a9c6e2da111f10b816599" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16"/>
+  <project name="kernel/devices/google/akita" path="private/devices/google/akita" revision="a2c93de29369026236788404d70417fbd666ce8c" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="akita,partner">
+    <linkfile src="build_akita.sh" dest="build_akita.sh"/>
+    <linkfile src="device.bazelrc" dest=".d5.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/bluejay" path="private/devices/google/bluejay" revision="eaeadd8bebb00615ddf305d4423d9c459cff36bf" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="bluejay,partner">
+    <linkfile src="build_bluejay.sh" dest="build_bluejay.sh"/>
+    <linkfile src="device.bazelrc" dest=".d14.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/caimito" path="private/devices/google/caimito" revision="50e603b87e53061d4ac42e00ebea4e2c39eceaa3" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="caimito,partner">
+    <linkfile src="build_caimito.sh" dest="build_caimito.sh"/>
+    <linkfile src="device.bazelrc" dest=".d7.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/comet" path="private/devices/google/comet" revision="64edef4599246964c76237997f49464de6f8897c" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="comet,partner">
+    <linkfile src="build_comet.sh" dest="build_comet.sh"/>
+    <linkfile src="device.bazelrc" dest=".d8.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/common" path="private/devices/google/common" revision="c2eaf3090a1d5c30f6b3e4c145701236e2ba3b49" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="bazel.WORKSPACE" dest="WORKSPACE"/>
+    <linkfile src="device.bazelrc" dest="device.bazelrc"/>
+    <linkfile src="update_symbol_list.sh" dest="update_symbol_list.sh"/>
+    <linkfile src="kleaf/common.BUILD.bazel" dest="common/BUILD.bazel"/>
+  </project>
+  <project name="kernel/devices/google/felix" path="private/devices/google/felix" revision="2cfdfe8732ca70b04f1b4e81df58a3d2104b36b9" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="felix,partner">
+    <linkfile src="build_felix.sh" dest="build_felix.sh"/>
+    <linkfile src="device.bazelrc" dest=".d2.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/gs101" path="private/devices/google/gs101" revision="a9b5edb4a1af922091683feff8f7804ec6986aea" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="build_gs101.sh" dest="build_gs101.sh"/>
+    <linkfile src="device.bazelrc" dest=".c1.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/gs201" path="private/devices/google/gs201" revision="05c125c7e2240e1cc0285e8d661881477c049cec" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="build_gs201.sh" dest="build_gs201.sh"/>
+    <linkfile src="device.bazelrc" dest=".c2.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/lynx" path="private/devices/google/lynx" revision="dd0e968b56172efb40aa997768517134090554f7" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="lynx,partner">
+    <linkfile src="build_lynx.sh" dest="build_lynx.sh"/>
+    <linkfile src="device.bazelrc" dest=".d15.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/pantah" path="private/devices/google/pantah" revision="9810b5840267f30cd3cc81d6b054de313140af58" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="pantah,partner">
+    <linkfile src="build_pantah.sh" dest="build_pantah.sh"/>
+    <linkfile src="device.bazelrc" dest=".d1.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/raviole" path="private/devices/google/raviole" revision="81506b991a5385be6c59ee27df4dda2b1379c507" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner,raviole">
+    <linkfile src="build_raviole.sh" dest="build_raviole.sh"/>
+    <linkfile src="device.bazelrc" dest=".d13.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/shusky" path="private/devices/google/shusky" revision="8f4470b717804ca7bb0d599e266c43611b6b0597" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner,shusky">
+    <linkfile src="build_shusky.sh" dest="build_shusky.sh"/>
+    <linkfile src="device.bazelrc" dest=".d4.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/tangorpro" path="private/devices/google/tangorpro" revision="4f47575de997b9eb749d5b4a15e746d421ea9dd7" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner,tangorpro">
+    <linkfile src="build_tangorpro.sh" dest="build_tangorpro.sh"/>
+    <linkfile src="device.bazelrc" dest=".d3.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/tegu" path="private/devices/google/tegu" revision="6276884d9940694b25a6934671918ec8ac412ee8" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner,tegu">
+    <linkfile src="build_tegu.sh" dest="build_tegu.sh"/>
+    <linkfile src="device.bazelrc" dest=".d9.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/zuma" path="private/devices/google/zuma" revision="42395e8adcb880aa336f0da6bb2a19ed53929c40" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="build_zuma.sh" dest="build_zuma.sh"/>
+    <linkfile src="device.bazelrc" dest=".c3.bazelrc"/>
+  </project>
+  <project name="kernel/devices/google/zumapro" path="private/devices/google/zumapro" revision="8831630eee2ad095b85ed452944e6353940966a5" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner">
+    <linkfile src="build_zumapro.sh" dest="build_zumapro.sh"/>
+    <linkfile src="device.bazelrc" dest=".c4.bazelrc"/>
+  </project>
+  <project name="kernel/google-modules/amplifiers" path="private/google-modules/amplifiers" revision="33976d763bc0ace11603e7ecb207fc2b6e3f2608" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/aoc" path="private/google-modules/aoc" revision="ac69293d11343b47f0b2b758b0df9f936360dbd4" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/aoc-ipc" path="private/google-modules/aoc_ipc" revision="1fe9b9cf3a2954a4a0c0f9868aa04c9d88c902b9" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/bluetooth/broadcom" path="private/google-modules/bluetooth/broadcom" revision="d7bd4dd23cc52fedd2e36c6e45c12f0c2a595ae0" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/bluetooth/qcom" path="private/google-modules/bluetooth/qcom" revision="db01db3176337742fb9752edd2964e3aa20d4d5e" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/bms" path="private/google-modules/bms" revision="183509aff980610401869deca9f6ce8836980fe7" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/display/common" path="private/google-modules/display/common" revision="e34756e6205a16083c5c7c4e5cde2c899674a120" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/display/panels/caimito" path="private/google-modules/display/panels/caimito" revision="cc607f06aef80273f18495ebd94914c6ed431e5b" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/display/panels/tegu" path="private/google-modules/display/panels/tegu" revision="e3a801fb038fdd1bbaec36d387f27bd99f10757a" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/display/samsung" path="private/google-modules/display/samsung" revision="2606e7143f21c4ff9be51d94922c1106a3aec071" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/edgetpu/abrolhos" path="private/google-modules/edgetpu/abrolhos" revision="8cc4978deec8cb971f67a33c863a3979ab03bea5" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/edgetpu/janeiro" path="private/google-modules/edgetpu/janeiro" revision="3595c0894ed962f474a90c9492aba5660f3fdf18" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/edgetpu/rio" path="private/google-modules/edgetpu/rio" revision="0087e3958c668dbdf9365527231791c959cb6629" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/fingerprint/fpc" path="private/google-modules/fingerprint/fpc" revision="54d2c3f31aa745a909f9e8b1253a37d85dfc1697" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/fingerprint/goodix" path="private/google-modules/fingerprint/goodix" revision="1ef2931fdde39005e2849f55b3d21a3019a7d2a0" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/fingerprint/qcom/qfs4008" path="private/google-modules/fingerprint/qcom/qfs4008" revision="b879542304e2fb327ff7a37f1a223049ab36aab1" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/gps/broadcom/bcm47765" path="private/google-modules/gps/broadcom/bcm47765" revision="f0c16ad0a6db43a0e043e8deba287fd8c59daf30" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/gpu" path="private/google-modules/gpu" revision="696fc0246c17ba4270c11f88ab742ad4040938de" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/gxp/gs201" path="private/google-modules/gxp/gs201" revision="891567caae3ba0fc1e3aeb4542e83f3222d0eb46" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/gxp/zuma" path="private/google-modules/gxp/zuma" revision="86822bb891e3bba26d13cd57e2b5313549b7d241" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/hdcp/samsung" path="private/google-modules/hdcp/samsung" revision="ede834ee212818014b9aac8dc1e4ae8ddebd4518" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/lwis" path="private/google-modules/lwis" revision="13e2d358e1cf3c6fe6cdc7bc9f42bc4b339e79f0" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/misc" path="private/google-modules/misc" revision="567e48cad475ccbaf8f6533809f1701be145b563" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/nfc" path="private/google-modules/nfc" revision="bc086de230162e9fc77bd59f9791d30d7f2c9e47" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/perf" path="private/google-modules/perf" revision="7de380977283cc556eb6d00f68acb45f34c37eab" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/power/mitigation" path="private/google-modules/power/mitigation" revision="4110bc074f90e8beb72decf1b2ceee14c5389856" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/power/reset" path="private/google-modules/power/reset" revision="ae088532b5e965536723b6b649b42a5b90717287" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/radio/samsung/s5300" path="private/google-modules/radio/samsung/s5300" revision="a8976934fe7f396627f9900958eb1457a74ebcca" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/radio/samsung/s5400" path="private/google-modules/radio/samsung/s5400" revision="a64b2a318d7dde50d66df89ed456c6e00c4ff34d" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/sensors/hall_sensor" path="private/google-modules/sensors/hall_sensor" revision="639f530ef612483feea1360e3ed2fe5f667b4472" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/soc/gs" path="private/google-modules/soc/gs" revision="204078758737776959ecc85c527a00fd2cabb62f" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/common" path="private/google-modules/touch/common" revision="340d76ec988f2960427647e9ac4852f072a86c88" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/focaltech_touch" path="private/google-modules/touch/focaltech" revision="e035429888527379af33a6959dc3b236af14d4e1" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/fts_touch" path="private/google-modules/touch/fts" revision="2a0089b3c7b9f1f1dbb52a1460a26621e50f61cf" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/goodix_touch" path="private/google-modules/touch/goodix" revision="033109552505197a50c9461cba70be2c2ecfa7cc" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/novatek_touch" path="private/google-modules/touch/novatek" revision="d3fcad967fac17de51a73824444b7ed6b7c4a29f" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/sec_touch" path="private/google-modules/touch/sec" revision="a371bc736f23c03f40ee00cf23512ef0551bb582" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/touch/synaptics_touch" path="private/google-modules/touch/synaptics" revision="a5d225cc4034f3e98c6f7f0c0c7e182c254a517f" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/trusty" path="private/google-modules/trusty" revision="2494a3e105ef21fd204c44598e1a960f73400b90" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/typec" path="private/google-modules/typec" revision="333f14ac78cd2294343ed3edbf917776b13f4c43" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/uwb/qorvo/dw3000" path="private/google-modules/uwb/qorvo/dw3000" revision="864328c664d499f2120bb0db3d21ecc83d0b23c1" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/uwb/qorvo/qm35" path="private/google-modules/uwb/qorvo/qm35" revision="9d1a8f20c703f6a002fff4d0d9abedf27e41c3d2" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/video/gchips" path="private/google-modules/video/gchips" revision="50f8cbc27de2ae9c42a0c6538b35aad763d25617" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/bcmdhd/bcm4383" path="private/google-modules/wlan/bcm4383" revision="3526a8cb8e13b7a72fca642c7b6411cd69e70d87" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/bcmdhd/bcm4389" path="private/google-modules/wlan/bcm4389" revision="de86f6ec77fd3ea86aba02b8c045a4f9fac69732" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/bcmdhd/bcm4390" path="private/google-modules/wlan/bcm4390" revision="2f66b21f47d4f6ab5bd87511c894b1782d04e742" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/bcmdhd/bcm4398" path="private/google-modules/wlan/bcm4398" revision="81ee8bee436b10cd325150b735e8a1f78ab1aff0" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/qcom/wcn6740/cnss2" path="private/google-modules/wlan/wcn6740/cnss2" revision="109f2e08965e042007386ca0492fb119acaf3790" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/qcom/wcn6740/wlan" path="private/google-modules/wlan/wcn6740/wlan" revision="d1efc457d0c4cebc1aef15c50994473cad1fa0cf" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/syna/dhd43752p" path="private/google-modules/wlan/dhd43752p" revision="3c566df7e7431f0a12544d0775121856cafdf87d" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/google-modules/wlan/wlan_ptracker" path="private/google-modules/wlan/wlan_ptracker" revision="ea3d749dca9a1e8d733aaf40f3ad1873897e54f1" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="kernel/prebuilts/build-tools" path="prebuilts/kernel-build-tools" revision="e905be252a53d20c52bd9e59df3ff8fdd46b9eab" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/build/bazel_common_rules" path="build/bazel_common_rules" revision="5601949bfbbf8e745e6a73948b0be7379aa61b38" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/external/bazel-skylib" path="external/bazel-skylib" revision="f998e5dc13c03f0eae9e373263d3afff0932c738" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/external/python/absl-py" path="external/python/absl-py" revision="2f199605a9875340569e039657f8b4c72d51b84d" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/external/stardoc" path="external/stardoc" revision="e83f522ee95419e55d2c5654aa6e0143beeef595" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/prebuilts/bazel/linux-x86_64" path="prebuilts/bazel/linux-x86_64" revision="7bfbec9e829bbae6816d5f39aba345df76e627c1" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/prebuilts/build-tools" path="prebuilts/build-tools" revision="c181f690fe9b76142b3203c2ab959b6299d4d1fd" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/prebuilts/clang/host/linux-x86" path="prebuilts/clang/host/linux-x86" revision="7775eb113f960bc69a780b621d03a715914d4bca" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" path="prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" revision="f6d40532273c8bd628b960ecc0970c7294c8d891" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/prebuilts/jdk/jdk11" path="prebuilts/jdk/jdk11" revision="649eec4416e2ed6298af49a56876772767a0e5ae" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="platform/system/tools/mkbootimg" path="tools/mkbootimg" revision="615a1fced5f8e2755642d30357674d3bfa21b85e" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+  <project name="toolchain/prebuilts/ndk/r23" path="prebuilts/ndk-r23" revision="19ac7e4eded12adb99d4f613490dde6dd0e72664" upstream="android-gs-raviole-6.1-android16" dest-branch="android-gs-raviole-6.1-android16" groups="partner"/>
+</manifest>
