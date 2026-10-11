@@ -149,3 +149,50 @@ cd ../..
 ```
 
 `strings` prints the same `6.1.145-android14-11-gfa1d6308d1fe-ab14691759` as `uname -r`, and `stock.config` is the full config of the stock kernel.
+
+## Baseline build
+
+Build the unpatched tree once before applying anything. If a patched build fails later, this tells you whether the problem is the patch or the tree and host.
+
+```bash
+cd kernel
+tools/bazel run \
+    --config=stamp \
+    --config=raviole \
+    --config=pixel_debug_common \
+    //private/devices/google/raviole:gs101_raviole_dist
+cd ..
+```
+
+`--config=raviole` selects the Pixel 6 and 6 Pro. `--config=pixel_debug_common` builds the GKI kernel from source instead of using Google's prebuilt one; without it, changes to the kernel never reach the image. The first build is slow because Bazel starts with an empty cache.
+
+The output lands in `kernel/out/raviole/dist/`. List the images and `vmlinux`:
+
+```bash
+ls kernel/out/raviole/dist/ | grep -E '\.img$|^vmlinux$'
+```
+
+Expected output:
+
+```
+boot.img
+dtb.img
+dtbo.img
+initramfs.img
+vendor_dlkm.img
+vmlinux
+```
+
+Read the kernel version from `vmlinux`:
+
+```bash
+strings kernel/out/raviole/dist/vmlinux | grep -m1 'Linux version'
+```
+
+Expected output:
+
+```
+Linux version 6.1.124-android14-11 (build-user@build-host) (Android (10087095, +pgo, +bolt, +lto, -mlgo, based on r487747c) clang version 17.0.2 (https://android.googlesource.com/toolchain/llvm-project d9f89f4d16663d5012e5c09495f3b30ece3d2362), LLD 17.0.2) #1 SMP PREEMPT Thu Jan  1 00:00:00 UTC 1970
+```
+
+`6.1.124-android14-11` is the branch's kernel, built from source. The 1970 date is normal: Kleaf builds are reproducible, so the build timestamp is fixed at zero.
