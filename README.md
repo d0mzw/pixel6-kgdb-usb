@@ -16,7 +16,8 @@ Patches and scripts to debug the Pixel 6 kernel with `gdb` over the phone's USB 
 pixel6-kgdb-usb/
 ├── manifest/pinned.xml   exact commit of every kernel project
 ├── patches/              the changes, one patch per concern
-├── scripts/              build, repack, flash and attach helpers
+├── docs/                 one document per patch, explaining it
+├── scripts/              build, repack, flash and attach helpers (not yet added)
 ├── kernel/               kernel source, synced here (ignored by git)
 └── factory/              stock factory image, downloaded here (ignored by git)
 ```
@@ -36,7 +37,34 @@ curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
 chmod a+x ~/bin/repo
 ```
 
-`adb` and `fastboot` come from Google's [platform-tools](https://developer.android.com/tools/releases/platform-tools) (release 37.0.1 was used here). Put the extracted `platform-tools/` folder on your `PATH`.
+`git am` records each patch as a commit, so git needs a name and email. Skip this if `git config user.email` already prints one:
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+`adb` and `fastboot` come from Google's [platform-tools](https://developer.android.com/tools/releases/platform-tools); release 37.0.1 was used here. Download it into your home folder and put it first on your `PATH`, ahead of any distribution `adb`:
+
+```bash
+curl -O https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+unzip -d ~ platform-tools_r37.0.1-linux.zip
+echo 'export PATH="$HOME/platform-tools:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Check that both tools come from that folder:
+
+```bash
+which adb fastboot
+```
+
+Expected output, with your home folder:
+
+```
+/home/you/platform-tools/adb
+/home/you/platform-tools/fastboot
+```
 
 ### Clone this repository
 
@@ -78,9 +106,18 @@ cd ..
 
 `sha256sum -c` must print `OK`. The zip is 3.4 GB and unpacks into `factory/oriole-cp1a.260405.005/`.
 
+### Turn on Developer options and USB debugging
+
+On the phone, open **Settings > About phone** and tap **Build number** seven times. Then open **Settings > System > Developer options** and turn on:
+
+- **OEM unlocking**, needed for the next step. It is greyed out on carrier-locked phones, which cannot be unlocked.
+- **USB debugging**, so `adb` can reach the phone.
+
+Connect the phone to the host and accept the **Allow USB debugging?** prompt on the phone.
+
 ### Unlock the bootloader
 
-Flashing a custom kernel needs an unlocked bootloader. Enable **OEM unlocking** in Developer options, then:
+Flashing a custom kernel needs an unlocked bootloader:
 
 ```bash
 adb reboot bootloader
@@ -105,7 +142,7 @@ cd factory/oriole-cp1a.260405.005
 cd ../..
 ```
 
-The phone reboots into setup when the script finishes. Skip through setup, then turn on **Developer options** (Settings, About phone, tap **Build number** seven times) and enable **USB debugging**. Accept the authorisation prompt when the host first connects.
+The phone reboots into setup when the script finishes. The flash wiped it, so skip through setup and repeat [Turn on Developer options and USB debugging](#turn-on-developer-options-and-usb-debugging). OEM unlocking stays on.
 
 ### Check the phone
 
@@ -196,3 +233,84 @@ Linux version 6.1.124-android14-11 (build-user@build-host) (Android (10087095, +
 ```
 
 `6.1.124-android14-11` is the branch's kernel, built from source. The 1970 date is normal: Kleaf builds are reproducible, so the build timestamp is fixed at zero.
+
+## Apply the patches
+
+> [!NOTE]
+> This repository is a work in progress. Only the first patch is published so far. The kernel cannot be debugged over USB until all patches are applied and the result is flashed; those patches and the flashing steps will follow.
+
+Each patch belongs to one project inside `kernel/` and is stored under the same path in `patches/`. For example, `patches/build/kernel/` holds the patches for `kernel/build/kernel`. Every patch has a matching document under `docs/` with the same path and name, explaining what it changes and why.
+
+Apply them in order, one at a time. Each step puts the project on a branch, applies the patch with `git am`, and checks it. `git am` records the patch as a commit, so `git log` shows exactly what was applied, and `git am --abort` backs out a patch that does not apply.
+
+### 1. Kleaf build system: kgdb config set
+
+- Project: `kernel/build/kernel`, Kleaf, the Bazel rules that build the kernel
+- Patch: `patches/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.patch`
+- Explained in: [`docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md`](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md)
+
+Put `build/kernel` on a branch. After a sync every project is on a detached HEAD, which is a bad place to commit:
+
+```bash
+cd kernel
+~/bin/repo start kgdb build/kernel
+```
+
+`repo start` prints nothing when it succeeds. Apply the patch. The path is absolute because `git -C` changes directory before reading it:
+
+```bash
+git -C build/kernel am "$PWD/../patches/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.patch"
+```
+
+Expected output:
+
+```
+Applying: kleaf: kgdb: enable kgdb over the USB serial console
+```
+
+Check that it is the top commit:
+
+```bash
+git -C build/kernel log -1 --format=%s
+```
+
+Expected output:
+
+```
+kleaf: kgdb: enable kgdb over the USB serial console
+```
+
+Build with `--kgdb`, the flag this patch extends:
+
+```bash
+tools/bazel run \
+    --config=stamp \
+    --config=raviole \
+    --config=pixel_debug_common \
+    --kgdb \
+    //private/devices/google/raviole:gs101_raviole_dist
+cd ..
+```
+
+Read the configs the patch touches from the built kernel:
+
+```bash
+sh kernel/aosp/scripts/extract-ikconfig kernel/out/raviole/dist/vmlinux | grep -E '^(# )?CONFIG_(KGDB|KGDB_KDB|KGDB_SERIAL_CONSOLE|CONSOLE_POLL|MAGIC_SYSRQ|U_SERIAL_CONSOLE|PANIC_ON_OOPS|WATCHDOG|RANDOMIZE_BASE|STRICT_KERNEL_RWX)[ =]'
+```
+
+Expected output:
+
+```
+# CONFIG_RANDOMIZE_BASE is not set
+CONFIG_STRICT_KERNEL_RWX=y
+CONFIG_CONSOLE_POLL=y
+CONFIG_WATCHDOG=y
+CONFIG_U_SERIAL_CONSOLE=y
+CONFIG_MAGIC_SYSRQ=y
+CONFIG_KGDB=y
+CONFIG_KGDB_SERIAL_CONSOLE=y
+CONFIG_KGDB_KDB=y
+# CONFIG_PANIC_ON_OOPS is not set
+```
+
+`STRICT_KERNEL_RWX=y` is expected: arm64 ignores the request to turn it off, and breakpoints work regardless. The doc explains why.
