@@ -1,0 +1,106 @@
+From f49b01d841753952877c4267e6edf4ad35d863d0 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:28:55 -0400
+Subject: [PATCH 4/5] kgdboc: add kgdb_break_after= to trap into kgdb after
+ boot
+
+Breaking into kgdb normally means sysrq-g, from a keyboard, a serial
+break or /proc/sysrq-trigger. A phone without root has none of these.
+
+kgdb_break_after=<seconds> schedules a breakpoint that many seconds
+after kgdboc initialises. Before trapping it retries the tty binding:
+kgdboc binds through deferred probe, which can stay pending when the
+tty is a USB gadget port that appears after the last driver probe. It
+retries every 10 s, up to 9 times, and never traps while unbound, since
+an unclaimed breakpoint would oops.
+
+It also clears dbg_kdb_mode first, so the trap enters the gdb stub
+rather than the kdb shell.
+
+Without the parameter nothing changes.
+---
+ drivers/tty/serial/kgdboc.c | 60 ++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 59 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/tty/serial/kgdboc.c b/drivers/tty/serial/kgdboc.c
+index 86433e3c3..fb22c5f39 100644
+--- a/drivers/tty/serial/kgdboc.c
++++ b/drivers/tty/serial/kgdboc.c
+@@ -280,6 +280,60 @@ static struct platform_driver kgdboc_platform_driver = {
+ 	},
+ };
+ 
++/*
++ * kgdb_break_after=<seconds> stops the kernel in kgdb that many seconds
++ * after boot. It is a way in when sysrq-g is out of reach, as it is on a
++ * phone without root.
++ *
++ * kgdboc binds its tty through deferred probe, which can stay pending if
++ * the tty, here a USB gadget port, appears after the last probe. So retry
++ * the binding here before trapping, and never trap unbound: an unclaimed
++ * breakpoint is a fatal oops.
++ */
++extern int dbg_kdb_mode;	/* kernel/debug/debug_core.h is private */
++
++static int kgdboc_break_after;
++
++static int __init kgdboc_break_after_setup(char *str)
++{
++	if (kstrtoint(str, 10, &kgdboc_break_after))
++		kgdboc_break_after = 0;
++	return 1;
++}
++__setup("kgdb_break_after=", kgdboc_break_after_setup);
++
++static void kgdboc_break_fn(struct work_struct *work);
++static DECLARE_DELAYED_WORK(kgdboc_break_work, kgdboc_break_fn);
++
++static void kgdboc_break_fn(struct work_struct *work)
++{
++	static int tries;
++
++	mutex_lock(&config_mutex);
++	if (configured != 1)
++		configure_kgdboc();
++	mutex_unlock(&config_mutex);
++
++	if (configured != 1) {
++		if (++tries < 10) {
++			pr_warn("kgdboc: %s not ready, retrying in 10 s\n",
++				config);
++			schedule_delayed_work(&kgdboc_break_work, 10 * HZ);
++		} else {
++			pr_warn("kgdboc: %s never bound, not trapping\n",
++				config);
++		}
++		return;
++	}
++
++	/* Enter the gdb stub, not the kdb shell gdb cannot talk to. */
++	if (IS_ENABLED(CONFIG_KGDB_KDB))
++		dbg_kdb_mode = 0;
++
++	pr_info("kgdboc: kgdb_break_after: trapping into kgdb\n");
++	kgdb_breakpoint();
++}
++
+ static int __init init_kgdboc(void)
+ {
+ 	int ret;
+@@ -305,8 +359,12 @@ static int __init init_kgdboc(void)
+ 	}
+ 
+ 	ret = platform_device_add(kgdboc_pdev);
+-	if (!ret)
++	if (!ret) {
++		if (kgdboc_break_after > 0)
++			schedule_delayed_work(&kgdboc_break_work,
++					      kgdboc_break_after * HZ);
+ 		return 0;
++	}
+ 
+ 	platform_device_put(kgdboc_pdev);
+ 
+-- 
+2.53.0
+

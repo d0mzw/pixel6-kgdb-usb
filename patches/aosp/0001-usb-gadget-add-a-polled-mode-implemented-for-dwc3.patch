@@ -1,0 +1,128 @@
+From f1e308fe437d097e96116ed98691b962f1d611e5 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:14:13 -0400
+Subject: [PATCH 1/5] usb: gadget: add a polled mode, implemented for dwc3
+
+kgdb drives its I/O with interrupts off and the other CPUs stopped, so
+USB request completions, which normally arrive through the controller's
+interrupt handler, never come. Add a udc_poll operation that processes
+pending controller events synchronously, and a usb_gadget_poll()
+wrapper for callers.
+
+It uses the first of the ANDROID_KABI_RESERVE slots in
+struct usb_gadget_ops, so the structure layout and the KMI are
+unchanged.
+
+The dwc3 implementation runs both halves of the interrupt handler by
+hand: dwc3_check_event_buf() to latch new events, then
+dwc3_process_event_buf() under dwc->lock. The lock is taken normally,
+because dwc3_gadget_giveback() releases and retakes it around each
+completion. A runtime-suspended controller is not polled: its resume
+is queued to a workqueue, which cannot run while the kernel is stopped.
+---
+ drivers/usb/dwc3/gadget.c  | 32 ++++++++++++++++++++++++++++++++
+ include/linux/usb/gadget.h | 24 +++++++++++++++++++++++-
+ 2 files changed, 55 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index e19c68b13..76b970907 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -2703,6 +2703,7 @@ static void dwc3_gadget_disable_irq(struct dwc3 *dwc)
+ 
+ static irqreturn_t dwc3_interrupt(int irq, void *_dwc);
+ static irqreturn_t dwc3_thread_interrupt(int irq, void *_dwc);
++static int dwc3_gadget_poll(struct usb_gadget *g);
+ 
+ /**
+  * dwc3_gadget_setup_nump - calculate and initialize NUMP field of %DWC3_DCFG
+@@ -3035,6 +3036,7 @@ static const struct usb_gadget_ops dwc3_gadget_ops = {
+ 	.vbus_draw		= dwc3_gadget_vbus_draw,
+ 	.check_config		= dwc3_gadget_check_config,
+ 	.udc_async_callbacks	= dwc3_gadget_async_callbacks,
++	.udc_poll		= dwc3_gadget_poll,
+ };
+ 
+ /* -------------------------------------------------------------------------- */
+@@ -4396,6 +4398,36 @@ static irqreturn_t dwc3_check_event_buf(struct dwc3_event_buffer *evt)
+ 	return IRQ_WAKE_THREAD;
+ }
+ 
++/*
++ * Run both halves of the interrupt handler by hand, for kgdb. Interrupts
++ * are off and the other CPUs are stopped, so this is the only way request
++ * completions get delivered.
++ *
++ * A runtime-suspended controller is left alone: its resume is queued to
++ * a workqueue, which cannot run while the kernel is stopped.
++ *
++ * dwc->lock is taken normally rather than tried. dwc3_gadget_giveback()
++ * drops and retakes it around each completion, so processing events
++ * without holding it would leave it locked for good.
++ */
++static int dwc3_gadget_poll(struct usb_gadget *g)
++{
++	struct dwc3 *dwc = gadget_to_dwc(g);
++	struct dwc3_event_buffer *evt = dwc->ev_buf;
++	unsigned long flags;
++
++	if (!evt || pm_runtime_suspended(dwc->dev))
++		return -EBUSY;
++
++	dwc3_check_event_buf(evt);
++
++	spin_lock_irqsave(&dwc->lock, flags);
++	dwc3_process_event_buf(evt);
++	spin_unlock_irqrestore(&dwc->lock, flags);
++
++	return 0;
++}
++
+ static irqreturn_t dwc3_interrupt(int irq, void *_evt)
+ {
+ 	struct dwc3_event_buffer	*evt = _evt;
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index a10c1a997..bdf5b1280 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -335,7 +335,11 @@ struct usb_gadget_ops {
+ 			struct usb_ss_ep_comp_descriptor *);
+ 	int	(*check_config)(struct usb_gadget *gadget);
+ 
+-	ANDROID_KABI_RESERVE(1);
++	/*
++	 * Process pending controller events without interrupts, for kgdb.
++	 * Must not sleep.
++	 */
++	ANDROID_KABI_USE(1, int (*udc_poll)(struct usb_gadget *gadget));
+ 	ANDROID_KABI_RESERVE(2);
+ 	ANDROID_KABI_RESERVE(3);
+ 	ANDROID_KABI_RESERVE(4);
+@@ -621,6 +625,24 @@ int usb_gadget_disconnect(struct usb_gadget *gadget);
+ int usb_gadget_deactivate(struct usb_gadget *gadget);
+ int usb_gadget_activate(struct usb_gadget *gadget);
+ int usb_gadget_check_config(struct usb_gadget *gadget);
++
++/**
++ * usb_gadget_poll - process pending controller events without interrupts
++ * @gadget: the device being controlled
++ *
++ * For kgdb, which runs with interrupts off and the other CPUs stopped, so
++ * request completions cannot arrive through the controller's interrupt
++ * handler. Does not sleep.
++ *
++ * Returns 0 on success, -EOPNOTSUPP if the controller has no polled mode,
++ * or -EBUSY if it cannot be polled right now.
++ */
++static inline int usb_gadget_poll(struct usb_gadget *gadget)
++{
++	if (!gadget->ops->udc_poll)
++		return -EOPNOTSUPP;
++	return gadget->ops->udc_poll(gadget);
++}
+ #else
+ static inline int usb_gadget_frame_number(struct usb_gadget *gadget)
+ { return 0; }
+-- 
+2.53.0
+

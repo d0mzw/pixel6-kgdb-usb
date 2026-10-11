@@ -1,0 +1,34 @@
+From b423470bb65953df15af15671c05d53e208dd422 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:33:36 -0400
+Subject: [PATCH 5/5] scripts/gdb: symbols: use a raw string for the module
+ pattern
+
+"\." in a normal string literal is an invalid escape sequence. Python
+3.12 and later warn about it every time vmlinux-gdb.py loads:
+
+  symbols.py:85: SyntaxWarning: "\." is an invalid escape sequence.
+
+Make the pattern a raw string. The regular expression is unchanged.
+This is the same change as mainline commit ded79af42f11
+("scripts/gdb/symbols: fix invalid escape sequence warning").
+---
+ scripts/gdb/linux/symbols.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/gdb/linux/symbols.py b/scripts/gdb/linux/symbols.py
+index dc07b6d12..4695776fa 100644
+--- a/scripts/gdb/linux/symbols.py
++++ b/scripts/gdb/linux/symbols.py
+@@ -82,7 +82,7 @@ lx-symbols command."""
+         self.module_files_updated = True
+ 
+     def _get_module_file(self, module_name):
+-        module_pattern = ".*/{0}\.ko(?:.debug)?$".format(
++        module_pattern = r".*/{0}\.ko(?:.debug)?$".format(
+             module_name.replace("_", r"[_\-]"))
+         for name in self.module_files:
+             if re.match(module_pattern, name) and os.path.exists(name):
+-- 
+2.53.0
+

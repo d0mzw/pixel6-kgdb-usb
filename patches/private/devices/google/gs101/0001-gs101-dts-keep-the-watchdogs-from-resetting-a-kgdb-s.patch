@@ -1,0 +1,60 @@
+From 40b387aad9a9f8ba01b92dc5d61c0ffd83c8be6e Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:33:48 -0400
+Subject: [PATCH] gs101: dts: keep the watchdogs from resetting a kgdb stop
+
+A kernel stopped in kgdb looks hung to every watchdog. Two of the
+gs101 ones are configured from the device tree:
+
+- watchdog_cl1 is marked use_multistage_wdt. In that mode, starting
+  the watchdog also starts cl1 as an early stage at 80% of the main
+  timeout. hardlockup-debug registers its interrupt as a FIQ whose
+  handler dumps state and reboots the phone, and the driver leaves
+  cl1's PMU reset unmasked. Drop use_multistage_wdt.
+
+- hardlockup-watchdog panics when a CPU's timer stops advancing,
+  which is exactly what a kgdb stop does. Set panic = <0>.
+
+The watchdog nodes themselves stay enabled. The bootloader starts the
+watchdog before Linux, and the driver stops it when it probes. With
+the node disabled the driver never probes, nothing stops it, and the
+phone resets about a minute into every boot.
+---
+ dts/gs101-debug.dtsi | 3 ++-
+ dts/gs101.dtsi       | 6 +++++-
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/dts/gs101-debug.dtsi b/dts/gs101-debug.dtsi
+index d5c72ae..0499b95 100644
+--- a/dts/gs101-debug.dtsi
++++ b/dts/gs101-debug.dtsi
+@@ -31,7 +31,8 @@
+ 		compatible = "google,hardlockup-watchdog";
+ 		sampling_time = <4>;
+ 		opportunity_count = <3>;
+-		panic = <1>;
++		/* A kgdb stop looks like a hard lockup; do not panic on it. */
++		panic = <0>;
+ 	};
+ 
+ 	dss-built {
+diff --git a/dts/gs101.dtsi b/dts/gs101.dtsi
+index e022615..1bb4bbc 100644
+--- a/dts/gs101.dtsi
++++ b/dts/gs101.dtsi
+@@ -1583,7 +1583,11 @@
+ 		timeout-sec = <30>;
+ 		samsung,syscon-phandle = <&pmu_system_controller>;
+ 		index = <1>; /* if little cluster then index is 0*/
+-		use_multistage_wdt; /* Use FIQ debug watchdog */
++		/*
++		 * No use_multistage_wdt. In that mode, starting the watchdog also
++		 * starts this one as an early stage whose interrupt hardlockup-debug
++		 * turns into a reboot, and the driver leaves its PMU reset unmasked.
++		 */
+ 	};
+ 
+ 	acpm_tmu {
+-- 
+2.53.0
+

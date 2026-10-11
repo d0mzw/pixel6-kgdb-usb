@@ -1,0 +1,245 @@
+From 3ce08c592cd1afd47d4f8d999355cdd8aa933008 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:19:08 -0400
+Subject: [PATCH 2/5] usb: gadget: u_serial: add polled I/O for kgdboc
+
+kgdboc talks to its tty through the poll_init, poll_get_char and
+poll_put_char operations, which must work with interrupts off and the
+other CPUs stopped. u_serial has none, so a gadget serial port cannot
+carry kgdb.
+
+Add them. Each port gets one IN and one OUT request reserved for polled
+use, outside the normal read and write pools. A transfer queues its
+request and then calls usb_gadget_poll() until the request completes or
+250,000 polls pass, at least 250 ms. A timed-out request stays queued
+and is waited on again by the next call, so its completion flag lives
+in the port, not on the stack.
+
+The poll loop also touches the soft-lockup, clocksource and RCU stall
+detectors every 1000 polls. kgdb does the same when it resumes, so this
+is only a precaution.
+---
+ drivers/usb/gadget/function/u_serial.c | 186 +++++++++++++++++++++++++
+ 1 file changed, 186 insertions(+)
+
+diff --git a/drivers/usb/gadget/function/u_serial.c b/drivers/usb/gadget/function/u_serial.c
+index 3b96b5e63..21097dffe 100644
+--- a/drivers/usb/gadget/function/u_serial.c
++++ b/drivers/usb/gadget/function/u_serial.c
+@@ -18,6 +18,10 @@
+ #include <linux/sched.h>
+ #include <linux/device.h>
+ #include <linux/delay.h>
++#include <linux/nmi.h>
++#include <linux/clocksource.h>
++#include <linux/rcupdate.h>
++#include <linux/serial_core.h>
+ #include <linux/tty.h>
+ #include <linux/tty_flip.h>
+ #include <linux/slab.h>
+@@ -128,6 +132,22 @@ struct gs_port {
+ 
+ 	/* REVISIT this state ... */
+ 	struct usb_cdc_line_coding port_line_coding;	/* 8-N-1 etc */
++
++#ifdef CONFIG_CONSOLE_POLL
++	/*
++	 * Requests for kgdb's polled I/O, kept apart from the normal pools.
++	 * The done flags live here, not on the stack, because a request that
++	 * times out stays queued and may complete later.
++	 */
++	struct usb_request	*poll_tx;	/* on the IN endpoint */
++	struct usb_request	*poll_rx;	/* on the OUT endpoint */
++	volatile int		poll_tx_done;
++	volatile int		poll_rx_done;
++	bool			poll_tx_busy;
++	bool			poll_rx_busy;
++	unsigned int		poll_rx_len;
++	unsigned int		poll_rx_pos;
++#endif
+ };
+ 
+ static struct portmaster {
+@@ -859,6 +879,167 @@ static int gs_break_ctl(struct tty_struct *tty, int duration)
+ 	return status;
+ }
+ 
++#ifdef CONFIG_CONSOLE_POLL
++
++/*
++ * Polled I/O for kgdboc. kgdb runs with interrupts off and the other CPUs
++ * stopped, so each transfer is queued and then completed by driving the
++ * controller with usb_gadget_poll() until it finishes or times out.
++ *
++ * The port must already be connected and configured by the host.
++ */
++
++#define GS_POLL_TIMEOUT_US	250000
++
++static void gs_poll_complete(struct usb_ep *ep, struct usb_request *req)
++{
++	*(volatile int *)req->context = 1;
++}
++
++static struct usb_gadget *gs_poll_gadget(struct gs_port *port)
++{
++	struct gserial *gser = port->port_usb;
++
++	if (!gser || !gser->func.config || !gser->func.config->cdev)
++		return NULL;
++	return gser->func.config->cdev->gadget;
++}
++
++/* kgdb also does this when it resumes; repeating it here is harmless. */
++static void gs_poll_touch_watchdogs(void)
++{
++	touch_softlockup_watchdog_sync();
++	clocksource_touch_watchdog();
++	rcu_cpu_stall_reset();
++}
++
++/*
++ * Queue @req unless it is still queued from a timed-out call, then poll
++ * until it completes. Returns the bytes transferred or a negative error.
++ */
++static int gs_poll_xfer(struct gs_port *port, struct usb_ep *ep,
++			struct usb_request *req, volatile int *done,
++			bool *busy)
++{
++	struct usb_gadget *gadget = gs_poll_gadget(port);
++	int waited = 0;
++	int status;
++
++	if (!gadget)
++		return -ENODEV;
++
++	if (!*busy) {
++		*done = 0;
++		req->context = (void *)done;
++		req->complete = gs_poll_complete;
++		status = usb_ep_queue(ep, req, GFP_ATOMIC);
++		if (status)
++			return status;
++		*busy = true;
++	}
++
++	while (!*done && waited < GS_POLL_TIMEOUT_US) {
++		if (usb_gadget_poll(gadget) == -EOPNOTSUPP)
++			return -EOPNOTSUPP;
++		udelay(1);
++		if (++waited % 1000 == 0)
++			gs_poll_touch_watchdogs();
++	}
++
++	if (!*done)
++		return -ETIMEDOUT;
++
++	*busy = false;
++	return req->status ? req->status : (int)req->actual;
++}
++
++static struct gs_port *gs_poll_port(int line)
++{
++	struct gs_port *port;
++
++	if (line < 0 || line >= MAX_U_SERIAL_PORTS)
++		return NULL;
++	port = ports[line].port;
++	if (!port || !port->poll_tx || !port->port_usb)
++		return NULL;
++	return port;
++}
++
++static int gs_poll_init(struct tty_driver *driver, int line, char *options)
++{
++	struct gs_port *port;
++	struct gserial *gser;
++
++	if (line < 0 || line >= MAX_U_SERIAL_PORTS)
++		return -ENODEV;
++	port = ports[line].port;
++	if (!port)
++		return -ENODEV;
++	if (port->poll_tx)
++		return 0;
++
++	gser = port->port_usb;
++	if (!gser || !gser->in || !gser->out)
++		return -ENODEV;
++
++	port->poll_rx = gs_alloc_req(gser->out, gser->out->maxpacket,
++				     GFP_KERNEL);
++	if (!port->poll_rx)
++		return -ENOMEM;
++	port->poll_tx = gs_alloc_req(gser->in, gser->in->maxpacket,
++				     GFP_KERNEL);
++	if (!port->poll_tx) {
++		gs_free_req(gser->out, port->poll_rx);
++		port->poll_rx = NULL;
++		return -ENOMEM;
++	}
++
++	port->poll_tx_busy = false;
++	port->poll_rx_busy = false;
++	port->poll_rx_len = 0;
++	port->poll_rx_pos = 0;
++	return 0;
++}
++
++static int gs_poll_get_char(struct tty_driver *driver, int line)
++{
++	struct gs_port *port = gs_poll_port(line);
++	u8 *buf;
++	int ret;
++
++	if (!port)
++		return NO_POLL_CHAR;
++
++	buf = port->poll_rx->buf;
++	if (port->poll_rx_pos < port->poll_rx_len)
++		return buf[port->poll_rx_pos++];
++
++	port->poll_rx->length = port->port_usb->out->maxpacket;
++	ret = gs_poll_xfer(port, port->port_usb->out, port->poll_rx,
++			   &port->poll_rx_done, &port->poll_rx_busy);
++	if (ret <= 0)
++		return NO_POLL_CHAR;
++
++	port->poll_rx_len = ret;
++	port->poll_rx_pos = 1;
++	return buf[0];
++}
++
++static void gs_poll_put_char(struct tty_driver *driver, int line, char ch)
++{
++	struct gs_port *port = gs_poll_port(line);
++
++	if (!port)
++		return;
++
++	*(u8 *)port->poll_tx->buf = ch;
++	port->poll_tx->length = 1;
++	gs_poll_xfer(port, port->port_usb->in, port->poll_tx,
++		     &port->poll_tx_done, &port->poll_tx_busy);
++}
++
++#endif /* CONFIG_CONSOLE_POLL */
++
+ static const struct tty_operations gs_tty_ops = {
+ 	.open =			gs_open,
+ 	.close =		gs_close,
+@@ -869,6 +1050,11 @@ static const struct tty_operations gs_tty_ops = {
+ 	.chars_in_buffer =	gs_chars_in_buffer,
+ 	.unthrottle =		gs_unthrottle,
+ 	.break_ctl =		gs_break_ctl,
++#ifdef CONFIG_CONSOLE_POLL
++	.poll_init =		gs_poll_init,
++	.poll_get_char =	gs_poll_get_char,
++	.poll_put_char =	gs_poll_put_char,
++#endif
+ };
+ 
+ /*-------------------------------------------------------------------------*/
+-- 
+2.53.0
+

@@ -1,0 +1,57 @@
+# usb: gadget: configfs: add a CDC-ACM port for kgdb with kgdb_acm
+
+| Patch | Details |
+| --- | --- |
+| File | `patches/aosp/0003-usb-gadget-configfs-add-a-CDC-ACM-port-for-kgdb-with.patch` |
+| Project | `kernel/aosp` (the GKI kernel source) |
+| Changes | `drivers/usb/gadget/configfs.c` |
+
+## The problem
+
+What the phone offers over USB is decided by userspace. Android builds its USB gadget through configfs, a filesystem under `/config/usb_gadget/` where each *function* (adb, MTP, a serial port, ...) is a directory, and a function is offered to the host by linking it into the active *configuration*. Android's init scripts and USB HAL do this, normally offering adb and nothing else.
+
+The polled serial port from the previous patch only helps if a CDC-ACM serial function is in that active configuration. On a production build there is no way to put one there without root:
+
+- configfs is writable only by root.
+- `svc usb setFunctions` offers no ACM function, and the `sys.usb.config` property cannot be set from the shell.
+- Older Android had `/sys/class/android_usb/android0/functions` for this. It no longer exists.
+
+Android's init scripts do create ACM function instances of their own (for example `acm.gs6` and `acm.uwb0` under `/config/usb_gadget/g1/functions/`), which take serial lines `ttyGS0` to `ttyGS2`. They are not in the configuration offered to the host, so nothing is behind them.
+
+## What the patch changes
+
+With `kgdb_acm` on the kernel command line, the kernel adds an ACM function itself. The code is only built when `CONFIG_KGDB` is on. `configfs_composite_bind()` runs whenever userspace binds the gadget to the controller, and for each configuration it adds the functions userspace linked. The patch calls `kgdb_acm_attach()` right after that, which adds one more:
+
+1. On first use, create an `acm` function instance with `usb_get_function_instance("acm")`. It takes the lowest free serial line, `ttyGS3` on this phone.
+2. Create a function from it and add it to the configuration with `usb_add_function()`.
+3. Give the line a console. `u_serial` only does that for line 0 by itself.
+4. Log the line number, as `kgdb_acm: ttyGS<line> attached to config <n>`.
+
+The host then sees a second interface next to adb, and creates a serial device for it, `/dev/ttyACM0` if the host has no other ACM device. kgdboc is pointed at the phone's side with `kgdboc=ttyGS3`.
+
+### The console
+
+A console is where the kernel writes its log. With a console on `ttyGS3`, and `console=ttyGS3` on the command line (`scripts/package.sh` names `ttyGS0` to `ttyGS4`), kernel messages are meant to reach the host on the same port as gdb. kgdb does not need this; it only needs the tty. In practice no kernel messages have been seen on the host, and if they were, they would arrive mixed into the gdb connection while the kernel runs.
+
+### Keeping adb working
+
+adb is the only way to control a phone without root, so losing USB would be expensive. On the first bind, the patch cannot take the gadget down:
+
+- It runs after `usb_gadget_check_config()`, the step that can fail the bind.
+- Every failure only logs a warning and returns. The gadget binds with or without the ACM port.
+
+### Rebinding
+
+Android rebinds the gadget whenever the USB mode changes, for example when switching between charging only and file transfer. On unbind, configfs moves every function in the configuration, this one included, back onto the configuration's function list, and the next bind adds them all again in its own loop, before `usb_gadget_check_config()`. `kgdb_acm_attach()` then finds the function already added and does nothing. The instance is created once and kept, so the port keeps the same line.
+
+Without `kgdb_acm` on the command line, nothing changes.
+
+## Limits
+
+- **Only the first bind is guaranteed to survive a failure here.** On a rebind, configfs adds the ACM function itself, and if that or the check after it fails, the whole bind fails and adb goes with it. Adding the same function a second time is not expected to fail, and it has not been seen to.
+- **Kernel log messages do not reach the host** through the console, as described above.
+- **Line 3 is specific to this phone:** it is the lowest line free after Android's own ACM instances. The log message reports it.
+
+## Verify
+
+Apply and build it with the README's [Apply the patches](../../README.md#apply-the-patches) and [Build](../../README.md#build) sections. After the build, `kgdb_acm_setup` is in `System.map`. On the phone, `/dev/ttyGS3` exists, and the host has a new `/dev/ttyACM*` device.

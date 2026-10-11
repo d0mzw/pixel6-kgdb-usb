@@ -3,3 +3,6 @@
 *.zip
 *.lz4
 /factory/
+/images/
+/.venv/
+__pycache__/

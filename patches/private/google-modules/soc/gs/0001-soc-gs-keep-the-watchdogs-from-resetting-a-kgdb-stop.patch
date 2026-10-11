@@ -1,0 +1,105 @@
+From b48f94a9c89c03350b10fdb0cf4e7d66f2a711ec Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sat, 10 Oct 2026 23:34:28 -0400
+Subject: [PATCH] soc: gs: keep the watchdogs from resetting a kgdb stop
+
+A kernel stopped in kgdb looks hung to every watchdog. Make the two
+vendor drivers that act on it default to not resetting:
+
+- s3c2410_wdt: default soft_noboot to 1, so expiry raises an interrupt
+  instead of a reset. On gs101 that alone is not enough, because the
+  reset is delivered through the PMU, which soft_noboot does not touch,
+  and the driver unmasks it at probe and again on every resume. Pass
+  soft_noboot to pmu_reset_func() at all three sites, so the PMU reset
+  stays masked whenever soft_noboot is set.
+
+- exynos-ehld: default noehld to 1. EHLD watches each core's
+  instruction count, and stopped cores look locked to it.
+
+Both are module parameters and could be set on the kernel command
+line, but the PMU change needs code anyway, and changing the defaults
+keeps the debug kernel safe however it is booted. With them, the
+hardware watchdog can no longer reset a hung phone: set both back to 0
+for any other use.
+---
+ drivers/soc/google/debug/exynos-ehld.c |  7 ++++++-
+ drivers/watchdog/s3c2410_wdt.c         | 17 ++++++++++++-----
+ 2 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/soc/google/debug/exynos-ehld.c b/drivers/soc/google/debug/exynos-ehld.c
+index 7188f19..0e0663c 100644
+--- a/drivers/soc/google/debug/exynos-ehld.c
++++ b/drivers/soc/google/debug/exynos-ehld.c
+@@ -1100,7 +1100,12 @@ static int exynos_ehld_setup(void)
+ 	return ret;
+ }
+ 
+-static unsigned long noehld;
++/*
++ * 1: EHLD off. It counts instructions on each core, and a kgdb stop looks
++ * like a lockup to it. Changed here for the same reason as soft_noboot in
++ * s3c2410_wdt.c. Set back to 0 for a production kernel.
++ */
++static unsigned long noehld = 1;
+ module_param(noehld, ulong, 0664);
+ MODULE_PARM_DESC(noehld, "disable EHLD by setting noehld=1");
+ 
+diff --git a/drivers/watchdog/s3c2410_wdt.c b/drivers/watchdog/s3c2410_wdt.c
+index a6b5729..d95ffc8 100644
+--- a/drivers/watchdog/s3c2410_wdt.c
++++ b/drivers/watchdog/s3c2410_wdt.c
+@@ -105,7 +105,14 @@
+ static bool nowayout	= WATCHDOG_NOWAYOUT;
+ static int tmr_margin;
+ static int tmr_atboot	= S3C2410_WATCHDOG_ATBOOT;
+-static int soft_noboot;
++/*
++ * 1: watchdog expiry raises an interrupt instead of resetting the SoC, so
++ * a kernel stopped in kgdb survives. Changed here rather than on the
++ * command line so the debug kernel is safe however it is booted, and
++ * because the PMU reset below needs a code change anyway. Set back to 0
++ * for a production kernel.
++ */
++static int soft_noboot = 1;
+ 
+ module_param(tmr_margin,  int, 0);
+ module_param(tmr_atboot,  int, 0);
+@@ -119,7 +126,7 @@ MODULE_PARM_DESC(tmr_atboot,
+ 			__MODULE_STRING(S3C2410_WATCHDOG_ATBOOT));
+ MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
+ 			__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
+-MODULE_PARM_DESC(soft_noboot, "Watchdog action, set to 1 to ignore reboots, 0 to reboot (default 0)");
++MODULE_PARM_DESC(soft_noboot, "Watchdog action, set to 1 to ignore reboots, 0 to reboot (default 1)");
+ 
+ struct schedstat {
+ 	u64 rt_load;
+@@ -1452,7 +1459,7 @@ static int s3c2410wdt_dev_resume(struct device *dev)
+ 	writel(wdt->wtdat_save, wdt->reg_base + S3C2410_WTCNT); /* Reset count */
+ 	writel(wdt->wtcon_save, wdt->reg_base + S3C2410_WTCON);
+ 	if (!wdt->use_multistage_wdt && wdt->drv_data->pmu_reset_func) {
+-		ret = wdt->drv_data->pmu_reset_func(wdt, false);
++		ret = wdt->drv_data->pmu_reset_func(wdt, soft_noboot);
+ 		if (ret < 0) {
+ 			dev_info(wdt->dev, "wdt reset mask fail");
+ 			return ret;
+@@ -1529,7 +1536,7 @@ static void s3c2410wdt_syscore_resume(void)
+ 	writel(wdt->wtcon_save, wdt->reg_base + S3C2410_WTCON);
+ 
+ 	if (!wdt->use_multistage_wdt && wdt->drv_data->pmu_reset_func) {
+-		ret = wdt->drv_data->pmu_reset_func(wdt, false);
++		ret = wdt->drv_data->pmu_reset_func(wdt, soft_noboot);
+ 		if (ret < 0) {
+ 			dev_info(wdt->dev, "pmu reset function fail");
+ 			return;
+@@ -1803,7 +1810,7 @@ static int s3c2410wdt_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (!wdt->use_multistage_wdt && wdt->drv_data->pmu_reset_func) {
+-		ret = wdt->drv_data->pmu_reset_func(wdt, false);
++		ret = wdt->drv_data->pmu_reset_func(wdt, soft_noboot);
+ 		if (ret < 0)
+ 			goto err_unregister;
+ 	}
+-- 
+2.53.0
+
