@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
 # Turn a kgdb kernel build into the images to flash:
 #
 #   images/boot.img         the kernel, as built
@@ -21,7 +22,6 @@ BIN=$TREE/prebuilts/kernel-build-tools/linux-x86/bin
 # Appended to the stock vendor_boot command line.
 DEBUG_CMDLINE="nowatchdog nosoftlockup softlockup_panic=0 hung_task_panic=0"
 DEBUG_CMDLINE+=" sysrq_always_enabled arm64.nopauth"
-DEBUG_CMDLINE+=" console=ttyGS0 console=ttyGS1 console=ttyGS2 console=ttyGS3 console=ttyGS4"
 DEBUG_CMDLINE+=" kgdb_acm kgdboc=ttyGS3 kgdb_break_after=90"
 
 # Modules that reset or panic the phone while the kernel is stopped.

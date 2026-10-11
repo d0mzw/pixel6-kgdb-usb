@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Attach gdb to the Pixel 6 kernel over USB.
 
 By default this reboots the phone, waits for Android to boot, waits for the

@@ -1,4 +1,4 @@
-From d3388a8dd26b6d0e38ffc275b29eb134306b201c Mon Sep 17 00:00:00 2001
+From bf42b6d3ac2172cce53cebdb88656cb9622e45cf Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sat, 10 Oct 2026 22:47:02 -0400
 Subject: [PATCH] kleaf: kgdb: enable kgdb over the USB serial console
@@ -8,21 +8,17 @@ serial gadget port:
 
 - KGDB_SERIAL_CONSOLE, CONSOLE_POLL, MAGIC_SYSRQ: kgdboc and the
   polled console it talks through.
-- U_SERIAL_CONSOLE: console support on the ttyGS* gadget ports.
-- PANIC_ON_OOPS off: the GKI defconfig panics on any oops. Android's
-  init.rc sets panic_on_oops again early in boot, so this only covers
-  the kernel before init runs.
 - WATCHDOG kept on: the gs101 watchdog drivers depend on it. Separate
   gs101 patches keep the watchdogs from resetting a stopped kernel.
 ---
- kleaf/impl/kgdb.bzl | 14 +++++++++++++-
- 1 file changed, 13 insertions(+), 1 deletion(-)
+ kleaf/impl/kgdb.bzl | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/kleaf/impl/kgdb.bzl b/kleaf/impl/kgdb.bzl
-index ec8dfd5..4cbd548 100644
+index ec8dfd5..fb2ca51 100644
 --- a/kleaf/impl/kgdb.bzl
 +++ b/kleaf/impl/kgdb.bzl
-@@ -84,11 +84,23 @@ def _get_scripts_config_args(ctx):
+@@ -84,11 +84,18 @@ def _get_scripts_config_args(ctx):
              _config.enable("GDB_SCRIPTS"),
              _config.enable("KGDB"),
              _config.enable("KGDB_KDB"),
@@ -31,11 +27,6 @@ index ec8dfd5..4cbd548 100644
 +            _config.enable("KGDB_SERIAL_CONSOLE"),
 +            _config.enable("CONSOLE_POLL"),
 +            _config.enable("MAGIC_SYSRQ"),
-+            # Console on the USB serial gadget (ttyGS*).
-+            _config.enable("U_SERIAL_CONSOLE"),
-+            # The GKI defconfig panics on any oops. Android's init.rc
-+            # turns panic_on_oops back on, so this only covers early boot.
-+            _config.disable("PANIC_ON_OOPS"),
              _config.disable("RANDOMIZE_BASE"),
              _config.disable("STRICT_KERNEL_RWX"),
              _config.enable("VT"),

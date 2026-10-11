@@ -391,7 +391,7 @@ cd ..
 Check the kernel config the first patch sets, read back from the built kernel:
 
 ```bash
-sh kernel/aosp/scripts/extract-ikconfig kernel/out/raviole/dist/vmlinux | grep -E '^(# )?CONFIG_(KGDB|KGDB_KDB|KGDB_SERIAL_CONSOLE|CONSOLE_POLL|MAGIC_SYSRQ|U_SERIAL_CONSOLE|PANIC_ON_OOPS|WATCHDOG|RANDOMIZE_BASE|STRICT_KERNEL_RWX)[ =]'
+sh kernel/aosp/scripts/extract-ikconfig kernel/out/raviole/dist/vmlinux | grep -E '^(# )?CONFIG_(KGDB|KGDB_KDB|KGDB_SERIAL_CONSOLE|CONSOLE_POLL|MAGIC_SYSRQ|WATCHDOG|RANDOMIZE_BASE|STRICT_KERNEL_RWX)[ =]'
 ```
 
 Expected output:
@@ -401,12 +401,10 @@ Expected output:
 CONFIG_STRICT_KERNEL_RWX=y
 CONFIG_CONSOLE_POLL=y
 CONFIG_WATCHDOG=y
-CONFIG_U_SERIAL_CONSOLE=y
 CONFIG_MAGIC_SYSRQ=y
 CONFIG_KGDB=y
 CONFIG_KGDB_SERIAL_CONSOLE=y
 CONFIG_KGDB_KDB=y
-# CONFIG_PANIC_ON_OOPS is not set
 ```
 
 `STRICT_KERNEL_RWX=y` is expected: on arm64 the option cannot be turned off, so `make olddefconfig` turns it back on, and breakpoints work regardless. The [first patch's doc](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#strict_kernel_rwx-stays-on) explains why.
@@ -422,9 +420,9 @@ Expected output:
 ```
 ffffffc008873290 t kgdboc_break_fn
 ffffffc008a00804 t dwc3_gadget_poll
-ffffffc008a51560 t gs_poll_init
-ffffffc008a516a4 t gs_poll_get_char
-ffffffc008a5177c t gs_poll_put_char
+ffffffc008a50f4c t gs_poll_init
+ffffffc008a50ffc t gs_poll_get_char
+ffffffc008a51108 t gs_poll_put_char
 ffffffc009c8d5dc t kgdb_acm_setup
 ```
 
@@ -486,7 +484,6 @@ The debug command line:
 | `softlockup_panic=0 hung_task_panic=0` | Override the device tree, which makes both panic |
 | `sysrq_always_enabled` | Keep SysRq, the kernel's emergency command channel, available |
 | `arm64.nopauth` | Turn off pointer authentication, so return addresses in backtraces are plain pointers |
-| `console=ttyGS0` to `console=ttyGS4` | Allow a console on the USB serial lines. The bootloader adds `console=null`, after which the kernel only enables consoles named on the command line. |
 | `kgdb_acm` | Add the USB serial port for kgdb ([aosp 0003](docs/aosp/0003-usb-gadget-configfs-add-a-CDC-ACM-port-for-kgdb-with.md)) |
 | `kgdboc=ttyGS3` | Run kgdb over that port, serial line 3 on this phone |
 | `kgdb_break_after=90` | Stop in kgdb 90 seconds after boot ([aosp 0004](docs/aosp/0004-kgdboc-add-kgdb_break_after-to-trap-into-kgdb-after-.md)) |
@@ -603,30 +600,30 @@ If the kernel has already stopped, `scripts/kgdb-attach.py --now` skips straight
 
 ### A demo session
 
-This session was recorded on the phone. The progress bars clear themselves when they finish, so they do not appear here.
+This session was recorded on the phone, with the host set up as in this README. The progress bars clear themselves when they finish, so they do not appear here.
 
 The script's output, up to the moment gdb connects to the stopped kernel:
 
 ```
-[00:48:57] checking the host
-[00:48:57]   adb: /home/you/android-platform-tools/platform-tools/adb
-[00:48:57]   fastboot: /home/you/android-platform-tools/platform-tools/fastboot
-[00:48:57]   gdb-multiarch: /usr/bin/gdb-multiarch
-[00:48:57]   vmlinux: kernel/out/raviole/dist/vmlinux
-[00:48:57]   gdb scripts: kernel/bazel-bin/aosp/kernel_aarch64/gdb_scripts/vmlinux-gdb.py
-[00:48:57]   kernel sources: kernel/aosp
-[00:48:57]   vmlinux release: 6.1.124-android14-11
-[00:48:57] checking the phone
-[00:48:57]   device: oriole
-[00:48:57]   running kernel: 6.1.124-android14-11
-[00:48:57]   kgdboc=ttyGS3, kgdb_break_after=90
-[00:48:57] rebooting the phone
-[00:49:02] phone went down, waiting for Android to boot
-[00:49:19] booted after 17 s
-[00:49:19] phone uptime 5 s, kernel stops at 90 s
-[00:50:55] kernel stopped (noticed at 100 s of uptime)
-[00:50:55] serial port /dev/ttyACM0 is ready
-[00:50:55] starting gdb-multiarch; `continue` or `detach` resumes the phone
+[02:31:01] checking the host
+[02:31:01]   adb: /home/you/platform-tools/adb
+[02:31:01]   fastboot: /home/you/platform-tools/fastboot
+[02:31:01]   gdb-multiarch: /usr/bin/gdb-multiarch
+[02:31:01]   vmlinux: kernel/out/raviole/dist/vmlinux
+[02:31:01]   gdb scripts: kernel/bazel-bin/aosp/kernel_aarch64/gdb_scripts/vmlinux-gdb.py
+[02:31:01]   kernel sources: kernel/aosp
+[02:31:01]   vmlinux release: 6.1.124-android14-11
+[02:31:01] checking the phone
+[02:31:01]   device: oriole
+[02:31:01]   running kernel: 6.1.124-android14-11
+[02:31:01]   kgdboc=ttyGS3, kgdb_break_after=90
+[02:31:01] rebooting the phone
+[02:31:06] phone went down, waiting for Android to boot
+[02:31:23] booted after 17 s
+[02:31:23] phone uptime 5 s, kernel stops at 90 s
+[02:32:58] kernel stopped (noticed at 101 s of uptime)
+[02:32:58] serial port /dev/ttyACM0 is ready
+[02:32:58] starting gdb-multiarch; `continue` or `detach` resumes the phone
 Reading symbols from /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux...
 The target architecture is set to "aarch64".
 Source directories searched: /home/you/Desktop/pixel6-kgdb-usb/kernel/aosp:$cdir:$cwd
@@ -635,8 +632,6 @@ arch_kgdb_breakpoint () at arch/arm64/include/asm/kgdb.h:21
 21              asm ("brk %0" : : "I" (KGDB_COMPILED_DBG_BRK_IMM));
 ```
 
-The paths depend on where the tools and the repository are on your machine; here platform-tools was in `~/android-platform-tools/` rather than `~/platform-tools/`.
-
 `bt` shows how the kernel got here: the work item from `kgdb_break_after` called `kgdb_breakpoint()`.
 
 ```
@@ -644,7 +639,7 @@ The paths depend on where the tools and the repository are on your machine; here
 #0  arch_kgdb_breakpoint () at arch/arm64/include/asm/kgdb.h:21
 #1  kgdb_breakpoint () at kernel/debug/debug_core.c:1221
 #2  0xffffffc0088732f0 in kgdboc_break_fn (work=<optimized out>) at drivers/tty/serial/kgdboc.c:334
-#3  0xffffffc0080da9e8 in process_one_work (worker=worker@entry=0xffffff8002d12240, work=work@entry=0xffffffc00a1ab770 <kgdboc_break_work>)
+#3  0xffffffc0080da9e8 in process_one_work (worker=worker@entry=0xffffff8002c2c240, work=work@entry=0xffffffc00a1ab770 <kgdboc_break_work>)
     at kernel/workqueue.c:2299
 (More stack frames follow...)
 ```
@@ -656,69 +651,68 @@ Set a breakpoint on a line of kernel source. Line 1339 of `fs/open.c` is in `do_
 Breakpoint 1 at 0xffffffc0083a14d0: file fs/open.c, line 1339.
 (gdb) continue
 Continuing.
-[Thread 2712 exited]
-[Thread 6399 exited]
-[Thread 3628 exited]
-[New Thread 6545]
-[Switching to Thread 2655]
+[New Thread 6553]
+[Thread 6401 exited]
+[Thread 3284 exited]
+[Switching to Thread 6553]
 
-Thread 2027 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01b0b3df0) at fs/open.c:1339
+Thread 4924 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc02276bdf0) at fs/open.c:1339
 1339            fd = get_unused_fd_flags(how->flags);
 ```
 
-`[Switching to Thread 2655]` names the process that hit the breakpoint by its process ID. The `2027` in `Thread 2027 hit Breakpoint 1` is gdb's own thread number, not a process ID. The `[Thread ... exited]` lines are threads that ended while the kernel ran.
+`[Switching to Thread 6553]` names the thread that hit the breakpoint by its kernel ID. The `4924` in `Thread 4924 hit Breakpoint 1` is gdb's own thread number, not an ID. The `[Thread ... exited]` lines are threads that ended while the kernel ran.
 
-Inspect the stopped kernel. `bt` gives the call stack, `print` reads kernel structures through their types, and `$lx_task_by_pid()`, from the kernel's gdb scripts, finds a process's `task_struct`:
+Inspect the stopped kernel. `bt` gives the call stack, `print` reads kernel structures through their types, and `$lx_task_by_pid()`, from the kernel's gdb scripts, finds a thread's `task_struct` by its ID:
 
 ```
 (gdb) bt 3
-#0  do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01b0b3df0) at fs/open.c:1339
-#1  0xffffffc0083a17d8 in do_sys_open (dfd=172494848, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=453721608, mode=<optimized out>)
+#0  do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc02276bdf0) at fs/open.c:1339
+#1  0xffffffc0083a17d8 in do_sys_open (dfd=46727168, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=578207240, mode=<optimized out>)
     at fs/open.c:1357
-#2  __do_sys_openat (dfd=172494848, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=<optimized out>, mode=<optimized out>) at fs/open.c:1373
+#2  __do_sys_openat (dfd=46727168, filename=0xfe0 <error: Cannot access memory at address 0xfe0>, flags=<optimized out>, mode=<optimized out>) at fs/open.c:1373
 (More stack frames follow...)
 (gdb) print *tmp
-$1 = {name = 0xffffff800a481020 "/data/data/com.google.android.gms/databases", uptr = 0x7a377aa2a4 <error: Cannot access memory at address 0x7a377aa2a4>,
-  refcnt = 1, aname = 0x0, iname = 0xffffff800a481020 "/data/data/com.google.android.gms/databases"}
+$1 = {name = 0xffffff8002c90020 "/system/etc/hosts", uptr = 0x7cd0aff0d2 <error: Cannot access memory at address 0x7cd0aff0d2>, refcnt = 1, aname = 0x0,
+  iname = 0xffffff8002c90020 "/system/etc/hosts"}
 (gdb) print tmp->name
-$2 = 0xffffff800a481020 "/data/data/com.google.android.gms/databases"
-(gdb) print $lx_task_by_pid(2655)->comm
-$3 = "android.bg\000\000\000\000\000"
-(gdb) print $lx_task_by_pid(2655)->pid
-$4 = 2655
-(gdb) print $lx_task_by_pid(2655)->real_parent->comm
-$5 = "main", '\000' <repeats 11 times>
+$2 = 0xffffff8002c90020 "/system/etc/hosts"
+(gdb) print $lx_task_by_pid(6553)->comm
+$3 = "Dns_52_10127\000\000\000"
+(gdb) print $lx_task_by_pid(6553)->pid
+$4 = 6553
+(gdb) print $lx_task_by_pid(6553)->real_parent->comm
+$5 = "init", '\000' <repeats 11 times>
 (gdb) print/x how->flags
 $6 = 0xa0000
 ```
 
-`tmp` is the kernel's `struct filename` for the path being opened. `uptr`, the caller's pointer to the same path, cannot be read (see [Things to know](#things-to-know)). Process 2655 is a thread named `android.bg`, and its parent `main` is Android's zygote. `0xa0000` in `how->flags` is `O_LARGEFILE | O_CLOEXEC`, opened read-only. Ignore the `dfd` and `filename` values in frames #1 and #2: in optimised code gdb cannot always recover a caller's arguments, and shows stale values instead.
+`tmp` is the kernel's `struct filename` for the path being opened, `/system/etc/hosts`. `uptr`, the caller's pointer to the same path, cannot be read (see [Things to know](#things-to-know)). Thread 6553 is named `Dns_52_10127`, and its parent process is `init`. `0xa0000` in `how->flags` is `O_LARGEFILE | O_CLOEXEC`, opened read-only. Ignore the `dfd` and `filename` values in frames #1 and #2: in optimised code gdb cannot always recover a caller's arguments, and shows stale values instead.
 
 Read raw memory: the first 32 bytes of the path, then the same address as a string:
 
 ```
 (gdb) x/32xb tmp->name
-0xffffff800a481020:     0x2f    0x64    0x61    0x74    0x61    0x2f    0x64    0x61
-0xffffff800a481028:     0x74    0x61    0x2f    0x63    0x6f    0x6d    0x2e    0x67
-0xffffff800a481030:     0x6f    0x6f    0x67    0x6c    0x65    0x2e    0x61    0x6e
-0xffffff800a481038:     0x64    0x72    0x6f    0x69    0x64    0x2e    0x67    0x6d
+0xffffff8002c90020:     0x2f    0x73    0x79    0x73    0x74    0x65    0x6d    0x2f
+0xffffff8002c90028:     0x65    0x74    0x63    0x2f    0x68    0x6f    0x73    0x74
+0xffffff8002c90030:     0x73    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+0xffffff8002c90038:     0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
 (gdb) x/s tmp->name
-0xffffff800a481020:     "/data/data/com.google.android.gms/databases"
+0xffffff8002c90020:     "/system/etc/hosts"
 ```
 
-Resume again. The breakpoint is still set, so the next `open()` stops the kernel, this time in another process, `android.ui`:
+Resume again. The breakpoint is still set, so the next `open()` stops the kernel, this time in another thread, `android.bg`:
 
 ```
 (gdb) continue
 Continuing.
-[Switching to Thread 1536]
+[Switching to Thread 2664]
 
-Thread 1091 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01a073df0) at fs/open.c:1339
+Thread 2042 hit Breakpoint 1, do_sys_openat2 (dfd=-100, filename=<optimized out>, how=how@entry=0xffffffc01b12bdf0) at fs/open.c:1339
 1339            fd = get_unused_fd_flags(how->flags);
 (gdb) print tmp->name
-$7 = 0xffffff80030ac020 "/proc/1536/cgroup"
-(gdb) print $lx_task_by_pid(1536)->comm
-$8 = "android.ui\000\000\000\000\000"
+$7 = 0xffffff8005a58020 "/data/data/com.google.android.gms/databases"
+(gdb) print $lx_task_by_pid(2664)->comm
+$8 = "android.bg\000\000\000\000\000"
 ```
 
 Remove the breakpoint and detach. Detaching resumes the kernel and leaves the phone running normally:
@@ -741,14 +735,14 @@ adb shell "echo phone alive; uptime; getprop ro.boot.bootreason; uname -r"
 
 ```
 phone alive
- 00:51:31 up 2 min,  0 users,  load average: 5.43, 2.50, 0.97
+ 02:33:29 up 2 min,  0 users,  load average: 8.88, 2.98, 1.08
 reboot
 6.1.124-android14-11
 ```
 
 `up 2 min` means the kernel was never reset: it booted, stopped in kgdb for the session, and carried on. A watchdog reset would also show in the boot reason, as `watchdog`, instead of `reboot`.
 
-Addresses, process IDs and file names differ on every run.
+Addresses, thread IDs and file names differ on every run.
 
 ### Things to know
 
@@ -760,8 +754,7 @@ Addresses, process IDs and file names differ on every run.
 ## Known issues
 
 - **A reboot sometimes ends in the bootloader instead of Android.** It has happened after `fastboot reboot`, after `adb reboot`, and as `fastboot reboot fastboot` failing with `Failed to boot into userspace fastboot`. Running the same command again, sometimes more than once, has always got the phone going. The slot stays healthy (`fastboot getvar all` shows `slot-successful:a:yes`, `slot-unbootable:a:no`), and the failed attempt leaves no boot reason in Android. The cause is not known yet. `scripts/kgdb-attach.py` detects it and runs `fastboot reboot` for you.
-- **Kernel log messages do not reach the host** over the USB console, although it is registered. kgdb does not need it.
-- **A crash reboots the phone instead of stopping in kgdb.** GKI is built with `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so gdb never sees them. Android's `init.rc` also turns `panic_on_oops` back on. See the [Kleaf patch doc](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#panic_on_oops).
+- **A crash reboots the phone instead of stopping in kgdb.** GKI is built with `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so gdb never sees them. See the [Kleaf patch's limits](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#limits).
 
 ## Recovery
 
@@ -776,3 +769,7 @@ cd ../..
 ```
 
 Going back to stock does not mean locking the bootloader: never run `fastboot flashing lock` (see [Flash](#flash)).
+
+## License
+
+This repository is licensed under the GNU General Public License, version 2 only ([`LICENSE`](LICENSE)). The patches change Linux kernel code, which is under the same license.

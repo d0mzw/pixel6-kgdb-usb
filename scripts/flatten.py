@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Flatten a Kleaf module tree into the layout Android ships.
 
 Kleaf installs modules as lib/modules/<release>/<subdir>/.../foo.ko, with

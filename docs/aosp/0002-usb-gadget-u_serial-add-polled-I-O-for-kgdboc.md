@@ -24,7 +24,9 @@ It implements the three operations in `u_serial`, on top of `usb_gadget_poll()` 
 
 ### Requests set aside for polling
 
-Each port normally has pools of requests for reading and writing, which belong to the interrupt-driven path and may be in the middle of a transfer when the kernel stops. The polled code keeps out of them. Instead, `gs_poll_init()` allocates two requests of its own: one on the IN endpoint (phone to host) and one on the OUT endpoint (host to phone), each the size of one USB packet on that endpoint at the time. kgdboc calls `gs_poll_init()` when it binds to the port.
+Each port normally has pools of requests for reading and writing, which belong to the interrupt-driven path and may be in the middle of a transfer when the kernel stops. The polled code keeps out of them and uses two requests of its own: one on the IN endpoint (phone to host) and one on the OUT endpoint (host to phone), each the size of one USB packet on that endpoint.
+
+When kgdboc binds to the port, `gs_poll_init()` marks the port as used for polling and makes the two requests. After that, `gserial_connect()` makes them again every time the host connects. A USB request belongs to one endpoint, and the endpoints and the packet size can change between connections, when Android rebinds the gadget or the link comes up at a different speed. Making the requests per connection keeps them matched.
 
 ### One transfer
 
@@ -36,28 +38,27 @@ Each port normally has pools of requests for reading and writing, which belong t
 
 `usb_ep_queue()` takes `dwc->lock` itself and releases it before returning, so the lock stays balanced, for the reason given in the [previous patch's doc](0001-usb-gadget-add-a-polled-mode-implemented-for-dwc3.md#the-dwc3-implementation).
 
+Each poll handles every pending controller event, including a disconnect and a new connection. A new connection replaces the requests, so after every poll the loop checks that its request is still current, and stops with an error if it is not, without touching the old one.
+
 ### Timeouts
 
 A transfer only finishes when the host takes part: the host must read for an IN transfer to complete, and must send for an OUT transfer. If gdb is not attached, nothing reads, and the transfer times out.
 
-A timed-out request is not cancelled; it stays queued in the controller. So it is marked busy, and the next call waits on it again instead of queuing it a second time. Its completion can arrive during any later poll, which is why each request has its own completion flag, stored in the port rather than on the caller's stack.
-
-One byte can go wrong this way. `gs_poll_put_char()` writes its byte into the request's buffer before it checks whether the request is still busy, so after a timeout the new byte either replaces the old one in the transfer still in progress, or is never sent. The gdb remote protocol protects every packet with a checksum and resends it when the checksum fails, so a session recovers from this on its own.
+A timed-out request is not cancelled; it stays queued in the controller and still owns its buffer. So it is marked busy, and the next call waits on it again instead of queuing it a second time. Its completion can arrive during any later poll, which is why each request has its own completion flag, stored in the port rather than on the caller's stack. Before `gs_poll_put_char()` writes a new byte into the IN buffer, it waits for any earlier transfer to finish, and drops the new byte if it still has not. The gdb remote protocol protects every packet with a checksum and resends it when the checksum fails, so a dropped byte only costs a resend.
 
 ### Reading and writing bytes
 
 `gs_poll_put_char()` sends one byte as a one-byte transfer. `gs_poll_get_char()` receives a whole packet, up to the endpoint's packet size, and hands it out a byte at a time on later calls before it polls again. With nothing received it returns `NO_POLL_CHAR`, which kgdb treats as "no data yet".
 
-### Lockup detectors
+### While disconnected
 
-Every 1000 polls the loop touches the soft-lockup detector, the clocksource watchdog and the RCU stall detector, the kernel's own checks for a CPU or a clock that has stopped making progress. These run from timer interrupts, which are off while kgdb runs, and kgdb touches all three itself when it resumes. So this is only a precaution. The hardware watchdogs are a separate matter, handled by the [gs101 device tree](../private/devices/google/gs101/0001-gs101-dts-keep-the-watchdogs-from-resetting-a-kgdb-s.md) and [soc/gs](../private/google-modules/soc/gs/0001-soc-gs-keep-the-watchdogs-from-resetting-a-kgdb-stop.md) patches.
+When the host disconnects, the port loses its USB link. The polled operations then have nothing to transfer, but they keep calling `usb_gadget_poll()`, so that when the cable is plugged back in, the new connection can be processed even with the kernel stopped, and `gserial_connect()` sets the port up again. This has not yet been tested on the phone: unplugging and replugging the cable while the kernel is stopped is still to be tried.
 
 ## Limits
 
-- **The port must already be connected:** the host must have enumerated the phone and configured the ACM function. Nothing here can bring USB up from inside the debugger.
-- **Unplugging the cable while the kernel is stopped cannot be recovered.** The disconnect clears the port's USB link, after which `gs_poll_get_char()` no longer polls the controller, so the reconnection is never processed and the kernel waits for gdb forever. Recover with Volume Down + Power.
-- **The polled requests are made once,** for the endpoints and packet size the port had when kgdboc bound. If the gadget is later rebound with different endpoints, dwc3 rejects them with a warning and the port stops working for kgdb. If the link comes back at a higher speed with larger packets, a received packet can overrun the receive buffer. Neither happened in the sessions run for this project, where the phone stayed on one connection.
-- **The polled requests are never freed.** That would leak them if the port were removed, but the port `kgdb_acm` creates is kept for the life of the kernel.
+- **The port must have been connected once:** the host must have enumerated the phone and configured the ACM function before kgdboc binds. Nothing here can bring USB up for the first time from inside the debugger.
+- **Reconnecting while stopped is untested** (see above). If it works, gdb has to attach again: On the host, the serial device disappears with the cable and comes back as a new device, so the old gdb session cannot continue on it.
+- **The requests are made inside the debugger on a reconnect while the kernel is stopped,** with `GFP_ATOMIC`. That only goes wrong if the CPU running kgdb was itself stopped inside the memory allocator.
 
 ## Verify
 

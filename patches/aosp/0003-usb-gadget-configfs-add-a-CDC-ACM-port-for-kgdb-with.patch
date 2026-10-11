@@ -1,6 +1,6 @@
-From 1a8f1f7203b26084268867a52c9e0a363d593854 Mon Sep 17 00:00:00 2001
+From 3f4ff970995edf13d798e1387050509c3a641574 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
-Date: Sat, 10 Oct 2026 23:24:10 -0400
+Date: Sun, 11 Oct 2026 02:20:25 -0400
 Subject: [PATCH 3/5] usb: gadget: configfs: add a CDC-ACM port for kgdb with
  kgdb_acm
 
@@ -11,22 +11,23 @@ root-only and the USB HAL offers no acm function.
 With "kgdb_acm" on the kernel command line, add an acm function to
 each configuration when configfs binds the gadget, next to whatever
 userspace asked for. It is added after usb_gadget_check_config() and
-failures only log, so the first bind cannot fail because of it. The
-function instance is created once and kept. On unbind, configfs moves
-the function back onto the configuration's function list with the
-others, and the next bind re-adds it from there; it is then found and
-not added a second time.
+failures only log, so a bind never fails because of it, and adb keeps
+working.
 
-The port also gets a console, since gserial_alloc_line() only gives
-one to line 0, and its tty line is logged for kgdboc=ttyGS<n>.
+On unbind, purge_configs_funcs() would hand every function back to the
+configuration's function list, and the next bind would add them all
+again before the check. Release the kgdb function there instead, so
+that every bind adds it through the same path. The function instance,
+and with it the tty line, is created once and kept, and the line is
+logged for kgdboc=ttyGS<n>.
 
 Without kgdb_acm on the command line nothing changes.
 ---
- drivers/usb/gadget/configfs.c | 86 +++++++++++++++++++++++++++++++++++
- 1 file changed, 86 insertions(+)
+ drivers/usb/gadget/configfs.c | 76 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
 
 diff --git a/drivers/usb/gadget/configfs.c b/drivers/usb/gadget/configfs.c
-index 61815efb0..30cd61642 100644
+index 61815efb0..dffeb22ca 100644
 --- a/drivers/usb/gadget/configfs.c
 +++ b/drivers/usb/gadget/configfs.c
 @@ -9,6 +9,7 @@
@@ -37,9 +38,9 @@ index 61815efb0..30cd61642 100644
  
  #ifdef CONFIG_USB_CONFIGFS_UEVENT
  #include <linux/platform_device.h>
-@@ -1313,6 +1314,88 @@ static void purge_configs_funcs(struct gadget_info *gi)
- 	}
- }
+@@ -1284,6 +1285,73 @@ int composite_dev_prepare(struct usb_composite_driver *composite,
+ int composite_os_desc_req_prepare(struct usb_composite_dev *cdev,
+ 				  struct usb_ep *ep0);
  
 +#if IS_ENABLED(CONFIG_KGDB)
 +/*
@@ -48,10 +49,9 @@ index 61815efb0..30cd61642 100644
 + * Android's userspace cannot add one without root.
 + *
 + * It is added after usb_gadget_check_config() and failures only log, so
-+ * the first bind cannot fail because of it. The function instance is
-+ * allocated once and kept. On unbind, configfs moves the function onto
-+ * the config's func_list with the others and the next bind re-adds it
-+ * from there, so it is found and not added again here.
++ * a bind never fails because of it. On unbind the function is released
++ * rather than handed back to configfs, so every bind adds it the same
++ * way. The function instance, and with it the tty line, is kept.
 + */
 +static bool kgdb_acm_enable;
 +static struct usb_function_instance *kgdb_acm_fi;
@@ -63,18 +63,12 @@ index 61815efb0..30cd61642 100644
 +}
 +__setup("kgdb_acm", kgdb_acm_setup);
 +
-+static bool kgdb_acm_present(struct list_head *head)
++static bool kgdb_acm_owns(struct usb_function *f)
 +{
-+	struct usb_function *f;
-+
-+	list_for_each_entry(f, head, list)
-+		if (f->fi == kgdb_acm_fi)
-+			return true;
-+	return false;
++	return kgdb_acm_fi && f->fi == kgdb_acm_fi;
 +}
 +
-+static void kgdb_acm_attach(struct usb_configuration *c,
-+			    struct config_usb_cfg *cfg)
++static void kgdb_acm_attach(struct usb_configuration *c)
 +{
 +	struct f_serial_opts *opts;
 +	struct usb_function *f;
@@ -83,11 +77,7 @@ index 61815efb0..30cd61642 100644
 +	if (!kgdb_acm_enable)
 +		return;
 +
-+	if (kgdb_acm_fi) {
-+		if (kgdb_acm_present(&c->functions) ||
-+		    kgdb_acm_present(&cfg->func_list))
-+			return;
-+	} else {
++	if (!kgdb_acm_fi) {
 +		kgdb_acm_fi = usb_get_function_instance("acm");
 +		if (IS_ERR(kgdb_acm_fi)) {
 +			pr_warn("kgdb_acm: no acm function (%ld)\n",
@@ -111,27 +101,35 @@ index 61815efb0..30cd61642 100644
 +	}
 +
 +	opts = container_of(kgdb_acm_fi, struct f_serial_opts, func_inst);
-+#if IS_ENABLED(CONFIG_U_SERIAL_CONSOLE)
-+	/* gserial_alloc_line() only gives line 0 a console */
-+	gserial_set_console(opts->port_num, "1", 1);
-+#endif
 +	pr_info("kgdb_acm: ttyGS%u attached to config %u\n",
 +		opts->port_num, c->bConfigurationValue);
 +}
 +#else
-+static inline void kgdb_acm_attach(struct usb_configuration *c,
-+				   struct config_usb_cfg *cfg) { }
++static inline bool kgdb_acm_owns(struct usb_function *f) { return false; }
++static inline void kgdb_acm_attach(struct usb_configuration *c) { }
 +#endif
 +
- static int configfs_composite_bind(struct usb_gadget *gadget,
- 		struct usb_gadget_driver *gdriver)
+ static void purge_configs_funcs(struct gadget_info *gi)
  {
-@@ -1441,6 +1524,9 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
+ 	struct usb_configuration	*c;
+@@ -1303,6 +1371,11 @@ static void purge_configs_funcs(struct gadget_info *gi)
+ 					f->name, f);
+ 				f->unbind(c, f);
+ 			}
++			if (kgdb_acm_owns(f)) {
++				/* kgdb_acm_attach() adds a new one on bind */
++				list_del(&f->list);
++				usb_put_function(f);
++			}
+ 		}
+ 		c->next_interface_id = 0;
+ 		memset(c->interface, 0, sizeof(c->interface));
+@@ -1441,6 +1514,9 @@ static int configfs_composite_bind(struct usb_gadget *gadget,
  		if (ret)
  			goto err_purge_funcs;
  
 +		/* after the check, so a failure here cannot fail the bind */
-+		kgdb_acm_attach(c, cfg);
++		kgdb_acm_attach(c);
 +
  		usb_ep_autoconfig_reset(cdev->gadget);
  	}

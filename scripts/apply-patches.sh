@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
 # Apply every patch in patches/ to the matching project in kernel/.
 #
 # patches/<project>/*.patch goes to kernel/<project>, in file name order,

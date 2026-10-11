@@ -24,32 +24,29 @@ With `kgdb_acm` on the kernel command line, the kernel adds an ACM function itse
 
 1. On first use, create an `acm` function instance with `usb_get_function_instance("acm")`. It takes the lowest free serial line, `ttyGS3` on this phone.
 2. Create a function from it and add it to the configuration with `usb_add_function()`.
-3. Give the line a console. `u_serial` only does that for line 0 by itself.
-4. Log the line number, as `kgdb_acm: ttyGS<line> attached to config <n>`.
+3. Log the line number, as `kgdb_acm: ttyGS<line> attached to config <n>`.
 
 The host then sees a second interface next to adb, and creates a serial device for it, `/dev/ttyACM0` if the host has no other ACM device. kgdboc is pointed at the phone's side with `kgdboc=ttyGS3`.
 
-### The console
-
-A console is where the kernel writes its log. With a console on `ttyGS3`, and `console=ttyGS3` on the command line (`scripts/package.sh` names `ttyGS0` to `ttyGS4`), kernel messages are meant to reach the host on the same port as gdb. kgdb does not need this; it only needs the tty. In practice no kernel messages have been seen on the host, and if they were, they would arrive mixed into the gdb connection while the kernel runs.
-
 ### Keeping adb working
 
-adb is the only way to control a phone without root, so losing USB would be expensive. On the first bind, the patch cannot take the gadget down:
+adb is the only way to control a phone without root, so losing USB would be expensive. The patch cannot take the gadget down:
 
 - It runs after `usb_gadget_check_config()`, the step that can fail the bind.
 - Every failure only logs a warning and returns. The gadget binds with or without the ACM port.
 
 ### Rebinding
 
-Android rebinds the gadget whenever the USB mode changes, for example when switching between charging only and file transfer. On unbind, configfs moves every function in the configuration, this one included, back onto the configuration's function list, and the next bind adds them all again in its own loop, before `usb_gadget_check_config()`. `kgdb_acm_attach()` then finds the function already added and does nothing. The instance is created once and kept, so the port keeps the same line.
+Android rebinds the gadget whenever the USB mode changes, for example when switching between charging only and file transfer. On unbind, configfs's `purge_configs_funcs()` normally moves every function back onto the configuration's function list, and the next bind adds them all again in its own loop, before `usb_gadget_check_config()`. That would put the kgdb function in the step that can fail the bind.
+
+So the patch has `purge_configs_funcs()` release the kgdb function instead, and every bind adds a new one through `kgdb_acm_attach()`, after the check. The function instance is created once and kept, so the port keeps the same line.
+
+The sessions so far have all been on the first bind after boot. A USB mode change followed by a debugging session has not been tested yet.
 
 Without `kgdb_acm` on the command line, nothing changes.
 
 ## Limits
 
-- **Only the first bind is guaranteed to survive a failure here.** On a rebind, configfs adds the ACM function itself, and if that or the check after it fails, the whole bind fails and adb goes with it. Adding the same function a second time is not expected to fail, and it has not been seen to.
-- **Kernel log messages do not reach the host** through the console, as described above.
 - **Line 3 is specific to this phone:** it is the lowest line free after Android's own ACM instances. The log message reports it.
 
 ## Verify

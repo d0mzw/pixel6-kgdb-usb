@@ -39,15 +39,13 @@ That is enough for kgdb on a typical board with a serial port. It is not enough 
 
 ## What the patch changes
 
-The patch adds five entries to the list and flips one. The "GKI default" column is the value in the GKI defconfig.
+The patch adds three entries to the list and flips one. The "GKI default" column is the value in the GKI defconfig.
 
 | Config | GKI default | With the patch | Why |
 | --- | --- | --- | --- |
 | `KGDB_SERIAL_CONSOLE` | not set | on | kgdboc, the driver that connects kgdb to a tty |
 | `CONSOLE_POLL` | not set | on | The polled tty hooks kgdboc uses while interrupts are off |
 | `MAGIC_SYSRQ` | on | on | SysRq, the kernel's emergency key channel; SysRq-G enters the debugger |
-| `U_SERIAL_CONSOLE` | not set | on | Lets the USB serial gadget ports (`ttyGS*`) act as consoles |
-| `PANIC_ON_OOPS` | on | off | Do not panic on an oops (early in boot only, see below) |
 | `WATCHDOG` | on (stock `--kgdb` turns it off) | on | The gs101 watchdog drivers need it |
 
 ### kgdboc and the polled console
@@ -56,17 +54,9 @@ kgdb itself only speaks the gdb remote protocol. It needs an I/O driver to move 
 
 `KGDB_SERIAL_CONSOLE` already selects `CONSOLE_POLL` and `MAGIC_SYSRQ` in `lib/Kconfig.kgdb`, and depends on `HW_CONSOLE`, which only exists when `VT` is on. That is why stock `--kgdb` enables `VT`. The patch lists them anyway so the intent is visible in the build file and in the final `.config`.
 
-### The USB serial gadget console
+### The USB serial port
 
-This setup uses no UART, so the tty kgdboc uses is a USB serial gadget port, `ttyGS<n>`, on the same USB cable as adb. GKI already builds the serial gadget (`USB_CONFIGFS_ACM=y`), but not its console support. `U_SERIAL_CONSOLE` adds it.
-
-This option only makes the ports console-capable. The gadget driver does not implement the polling hooks kgdboc needs; [aosp 0001](../../aosp/0001-usb-gadget-add-a-polled-mode-implemented-for-dwc3.md) and [aosp 0002](../../aosp/0002-usb-gadget-u_serial-add-polled-I-O-for-kgdboc.md) add them to the dwc3 USB controller driver and to `u_serial`.
-
-### PANIC_ON_OOPS
-
-An *oops* is the kernel's report of a serious error, such as a bad memory access in kernel code. The GKI defconfig sets `PANIC_ON_OOPS=y` and `PANIC_TIMEOUT=-1`, so any oops becomes a panic and the phone reboots immediately. The patch turns `PANIC_ON_OOPS` off, but on Android that only lasts until init runs: AOSP's `init.rc` writes `1` to `/proc/sys/kernel/panic_on_oops` early in every boot. Read through kgdb on a running phone, `panic_on_oops` is `1` despite this option.
-
-kgdb does not catch the crash either. It hooks oopses through the kernel's die notifier and panics through `kgdb_panic()`, but both step aside when the panic timeout is non-zero, so that a phone set to reboot on panic is not left waiting for a debugger. GKI sets `PANIC_TIMEOUT=-1`, and read through kgdb on a running phone, `panic_timeout` is `-1`. So on this kernel an oops or panic reboots the phone at once, and gdb never sees it.
+This setup uses no UART, so the tty kgdboc uses is a USB serial gadget port, `ttyGS<n>`, on the same USB cable as adb. GKI already builds the serial gadget (`USB_CONFIGFS_ACM=y`), so no option is needed for the port itself. The gadget driver does not implement the polling hooks kgdboc needs; [aosp 0001](../../aosp/0001-usb-gadget-add-a-polled-mode-implemented-for-dwc3.md) and [aosp 0002](../../aosp/0002-usb-gadget-u_serial-add-polled-I-O-for-kgdboc.md) add them to the dwc3 USB controller driver and to `u_serial`.
 
 ### WATCHDOG
 
@@ -80,12 +70,11 @@ Stock `--kgdb` turns `STRICT_KERNEL_RWX` off, but `make olddefconfig` turns it b
 
 ## Limits
 
-- **`PANIC_ON_OOPS` only covers early boot,** because Android's `init.rc` turns `panic_on_oops` back on.
-- **Crashes are not caught by kgdb.** With `PANIC_TIMEOUT=-1`, an oops or panic reboots the phone without stopping in the debugger.
+- **Crashes are not caught by kgdb.** The GKI defconfig sets `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so a crash reboots the phone without stopping in the debugger. Turning off `PANIC_ON_OOPS` would not help: AOSP's `init.rc` writes `1` to `/proc/sys/kernel/panic_on_oops` early in every boot.
 - **The device fragments are merged after these edits.** `gs101_defconfig` and `raviole_defconfig` set none of these options today, but a fragment that did would override the patch. The check below reads the final values from the built kernel.
 
 ## Verify
 
 Apply and build it with the README's [Apply the patches](../../../README.md#apply-the-patches) and [Build](../../../README.md#build) sections. The Build check reads the options above back out of the built kernel, which carries its own configuration (`IKCONFIG=y`).
 
-Without the patch, `CONSOLE_POLL`, `U_SERIAL_CONSOLE` and `KGDB_SERIAL_CONSOLE` are missing, `PANIC_ON_OOPS` is on, and `WATCHDOG` is off. `STRICT_KERNEL_RWX=y` appears either way, for the reason above.
+Without the patch, `CONSOLE_POLL` and `KGDB_SERIAL_CONSOLE` are missing, and `WATCHDOG` is off. `STRICT_KERNEL_RWX=y` appears either way, for the reason above.
