@@ -1,7 +1,7 @@
 From 8a6bc84761ab8d177e6506339951d33255bd30f2 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sat, 10 Oct 2026 23:28:55 -0400
-Subject: [PATCH 4/6] kgdboc: retry binding the tty, and add kgdb_break_after=
+Subject: [PATCH 4/7] kgdboc: retry binding the tty, and add kgdb_break_after=
 
 kgdboc binds its tty through deferred probe, which can stay pending when
 the tty is a USB gadget port that appears after the last driver probe.

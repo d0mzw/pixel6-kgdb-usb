@@ -70,7 +70,7 @@ Stock `--kgdb` turns `STRICT_KERNEL_RWX` off, but `make olddefconfig` turns it b
 
 ## Limits
 
-- **Crashes are not caught by kgdb.** The GKI defconfig sets `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so a crash reboots the phone without stopping in the debugger. Turning off `PANIC_ON_OOPS` would not help: AOSP's `init.rc` writes `1` to `/proc/sys/kernel/panic_on_oops` early in every boot.
+- **Crashes are not caught by kgdb from configuration alone.** The GKI defconfig sets `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so a crash reboots the phone without stopping in the debugger. Turning off `PANIC_ON_OOPS` would not help: AOSP's `init.rc` writes `1` to `/proc/sys/kernel/panic_on_oops` early in every boot. [aosp 0007](../../aosp/0007-kgdb-stop-on-oopses-and-panics-with-kgdb_catch_crash.md) adds `kgdb_catch_crashes=1` for this.
 - **The device fragments are merged after these edits.** `gs101_defconfig` and `raviole_defconfig` set none of these options today, but a fragment that did would override the patch. The check below reads the final values from the built kernel.
 
 ## Verify

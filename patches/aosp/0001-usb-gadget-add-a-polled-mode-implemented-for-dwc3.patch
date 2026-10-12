@@ -1,7 +1,7 @@
 From db9854d4d17d1f8cbacceb7aaea63091312020c2 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sat, 10 Oct 2026 23:14:13 -0400
-Subject: [PATCH 1/6] usb: gadget: add a polled mode, implemented for dwc3
+Subject: [PATCH 1/7] usb: gadget: add a polled mode, implemented for dwc3
 
 kgdb drives its I/O with interrupts off and the other CPUs stopped, so
 USB request completions, which normally arrive through the controller's

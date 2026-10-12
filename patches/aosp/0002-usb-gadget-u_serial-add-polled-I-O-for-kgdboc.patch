@@ -1,7 +1,7 @@
 From 46ad165a985f10fd5d0518df8e36bbff46977046 Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sun, 11 Oct 2026 02:20:02 -0400
-Subject: [PATCH 2/6] usb: gadget: u_serial: add polled I/O for kgdboc
+Subject: [PATCH 2/7] usb: gadget: u_serial: add polled I/O for kgdboc
 
 kgdboc talks to its tty through the poll_init, poll_get_char and
 poll_put_char operations, which must work with interrupts off and the

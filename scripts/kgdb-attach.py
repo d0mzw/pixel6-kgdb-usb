@@ -156,7 +156,8 @@ def check_phone(release, port, timeout):
         # adb. A booting phone has no USB device at all yet.
         if os.path.exists(port):
             fail(f"adb does not answer but {port} is present, so the kernel "
-                 "is probably already stopped in kgdb; attach with --now")
+                 "is probably already stopped in kgdb, by a crash or an "
+                 "earlier session; attach with --now")
         log("adb does not answer yet, waiting for the phone to boot")
         wait_for_android(timeout)
     model = adb("shell", "getprop", "ro.product.device")

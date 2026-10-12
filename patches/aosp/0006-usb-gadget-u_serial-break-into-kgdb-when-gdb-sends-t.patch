@@ -1,7 +1,7 @@
 From 63acb7dc110eb000fc97979efa91da24d0ab232b Mon Sep 17 00:00:00 2001
 From: Dom <dominic.ck.wang@protonmail.com>
 Date: Sun, 11 Oct 2026 07:53:42 -0400
-Subject: [PATCH 6/6] usb: gadget: u_serial: break into kgdb when gdb sends to
+Subject: [PATCH 6/7] usb: gadget: u_serial: break into kgdb when gdb sends to
  the port
 
 A kernel running kgdb over a gadget serial port can only be stopped from

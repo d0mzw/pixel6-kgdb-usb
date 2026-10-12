@@ -22,7 +22,7 @@ BIN=$TREE/prebuilts/kernel-build-tools/linux-x86/bin
 # Appended to the stock vendor_boot command line.
 DEBUG_CMDLINE="nowatchdog nosoftlockup softlockup_panic=0 hung_task_panic=0"
 DEBUG_CMDLINE+=" sysrq_always_enabled arm64.nopauth"
-DEBUG_CMDLINE+=" kgdb_acm kgdboc=ttyGS3"
+DEBUG_CMDLINE+=" kgdb_acm kgdboc=ttyGS3 kgdb_catch_crashes=1"
 
 # Modules that reset or panic the phone while the kernel is stopped.
 export DROP_MODULES="ehld.ko hardlockup-debug.ko hardlockup-watchdog.ko"

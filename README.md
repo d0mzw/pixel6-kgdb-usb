@@ -330,6 +330,7 @@ Each patch belongs to one project inside `kernel/` and is stored under the same 
 | `aosp` | [0004](docs/aosp/0004-kgdboc-retry-binding-the-tty-and-add-kgdb_break_afte.md) | Binds kgdb to the USB serial port once it appears; optional `kgdb_break_after=` |
 | `aosp` | [0005](docs/aosp/0005-scripts-gdb-symbols-use-a-raw-string-for-the-module-.md) | Silences a Python warning in the gdb scripts |
 | `aosp` | [0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md) | Stops the running kernel when gdb connects or sends Ctrl+C |
+| `aosp` | [0007](docs/aosp/0007-kgdb-stop-on-oopses-and-panics-with-kgdb_catch_crash.md) | `kgdb_catch_crashes=`: a crash stops in kgdb instead of rebooting |
 | `private/devices/google/gs101` | [0001](docs/private/devices/google/gs101/0001-gs101-dts-keep-the-watchdogs-from-resetting-a-kgdb-s.md) | Device tree: watchdogs do not reset a stopped kernel |
 | `private/google-modules/display/samsung` | [0001](docs/private/google-modules/display/samsung/0001-drm-samsung-dqe-keep-the-dqe-class-name-alive.md) | Display driver: fixes a crash about a second into some boots |
 | `private/google-modules/soc/gs` | [0001](docs/private/google-modules/soc/gs/0001-soc-gs-keep-the-watchdogs-from-resetting-a-kgdb-stop.md) | Watchdog drivers: same, in code |
@@ -351,6 +352,7 @@ Applying: usb: gadget: configfs: add a CDC-ACM port for kgdb with kgdb_acm
 Applying: kgdboc: retry binding the tty, and add kgdb_break_after=
 Applying: scripts/gdb: symbols: use a raw string for the module pattern
 Applying: usb: gadget: u_serial: break into kgdb when gdb sends to the port
+Applying: kgdb: stop on oopses and panics with kgdb_catch_crashes=
 == build/kernel
 Starting kgdb: 100% (1/1), done in 0.007s
 Applying: kleaf: kgdb: enable kgdb over the USB serial console
@@ -493,6 +495,7 @@ The debug command line:
 | `arm64.nopauth` | Turn off pointer authentication, so return addresses in backtraces are plain pointers |
 | `kgdb_acm` | Add the USB serial port for kgdb ([aosp 0003](docs/aosp/0003-usb-gadget-configfs-add-a-CDC-ACM-port-for-kgdb-with.md)) |
 | `kgdboc=ttyGS3` | Run kgdb over that port, serial line 3 on this phone |
+| `kgdb_catch_crashes=1` | Stop in kgdb on an oops or a panic instead of rebooting ([aosp 0007](docs/aosp/0007-kgdb-stop-on-oopses-and-panics-with-kgdb_catch_crash.md)) |
 
 To also stop the kernel at a fixed time after every boot, add `kgdb_break_after=<seconds>` to `DEBUG_CMDLINE` in `scripts/package.sh` and package again ([aosp 0004](docs/aosp/0004-kgdboc-retry-binding-the-tty-and-add-kgdb_break_afte.md)). It is not needed to attach: gdb stops the kernel itself.
 
@@ -608,7 +611,7 @@ gdb's first packet stops the running kernel ([aosp 0006](docs/aosp/0006-usb-gadg
 | --- | --- |
 | `scripts/kgdb-attach.py` | Stops the running kernel and attaches |
 | `scripts/kgdb-attach.py --boot` | Reboots the phone and stops the kernel as soon as its USB port is up, about 5 seconds into boot. If the phone booted less than a minute ago, it first waits (see [Known issues](#known-issues)). If the phone stops in the bootloader instead (see [Known issues](#known-issues)), it runs `fastboot reboot`, up to three times. |
-| `scripts/kgdb-attach.py --now` | Skips the checks and attaches straight away, for example to a kernel that is already stopped after gdb was closed without detaching |
+| `scripts/kgdb-attach.py --now` | Skips the checks and attaches straight away, for example to a kernel that is already stopped by a crash, or after gdb was closed without detaching |
 
 `--help` lists the other options.
 
@@ -785,6 +788,71 @@ Ending remote debugging.
 
 Addresses, thread IDs and file names differ on every run.
 
+### Catching a crash
+
+When the kernel oopses or panics, it stops in kgdb instead of rebooting ([aosp 0007](docs/aosp/0007-kgdb-stop-on-oopses-and-panics-with-kgdb_catch_crash.md)), whether or not gdb is attached. If gdb is attached, it reports the crash, for an oops as `received signal SIGSEGV` at the faulting instruction. If not, the phone freezes and waits.
+
+To try it, crash the kernel on purpose: attach, set the program counter to 0, and resume with `detach`, so that no gdb is connected when it crashes:
+
+```
+(gdb) set var $pc = 0
+(gdb) detach
+```
+
+The kernel faults on the jump and stops. adb no longer answers, so the default mode stops with a hint:
+
+```bash
+scripts/kgdb-attach.py
+```
+
+```
+[06:15:07] checking the host
+...
+[06:15:07] checking the phone
+[06:15:15] error: adb does not answer but /dev/ttyACM0 is present, so the kernel is probably already stopped in kgdb, by a crash or an earlier session; attach with --now
+```
+
+Attach without the checks:
+
+```bash
+scripts/kgdb-attach.py --now
+```
+
+```
+[06:15:15] skipping the phone checks
+[06:15:15] serial port /dev/ttyACM0 is ready
+[06:15:15] starting gdb-multiarch; connecting stops the kernel, `continue` or `detach` resumes it, Ctrl+C stops it again
+Reading symbols from /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux...
+The target architecture is set to "aarch64".
+Source directories searched: /home/you/Desktop/pixel6-kgdb-usb/kernel/aosp:$cdir:$cwd
+Remote debugging using /dev/ttyACM0
+0x0000000000000004 in ?? ()
+(gdb) bt 5
+#0  0x0000000000000004 in ?? ()
+#1  0xffffffc008a50ba4 in gs_poll_break_fn (t=<optimized out>)
+    at drivers/usb/gadget/function/u_serial.c:928
+#2  0xffffffc0080b88b0 in tasklet_action_common (a=<optimized out>,
+    tl_head=0xffffff89580898c8, softirq_nr=softirq_nr@entry=6)
+    at kernel/softirq.c:853
+#3  0xffffffc0080b84e8 in tasklet_action (a=<optimized out>)
+    at kernel/softirq.c:878
+#4  0xffffffc0080b79dc in handle_softirqs (ksirqd=true) at kernel/softirq.c:617
+(More stack frames follow...)
+```
+
+The fault is at address 4, not 0, because resuming from gdb's stop steps over the breakpoint instruction the kernel stopped on. Frame #1 is where the kernel had stopped for gdb ([aosp 0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md)). For a real crash, the backtrace shows the code that crashed.
+
+The crash is still fatal. `continue` or `detach` lets the panic go on, and the phone reboots:
+
+```
+(gdb) detach
+Detaching from program: /home/you/Desktop/pixel6-kgdb-usb/kernel/out/raviole/dist/vmlinux, Remote target
+Ending remote debugging.
+[Inferior 1 (Remote target) detached]
+```
+
+Once it has booted, `adb shell getprop sys.boot.reason` shows `kernel_panic,null`.
+
 ### Things to know
 
 - **The phone is frozen while the kernel is stopped.** `continue` or `detach` resumes it.
@@ -798,7 +866,8 @@ Addresses, thread IDs and file names differ on every run.
 
 - **A reboot sometimes ends in the bootloader instead of Android.** It has happened after `fastboot reboot`, after `adb reboot`, and as `fastboot reboot fastboot` failing with `Failed to boot into userspace fastboot`. Running the same command again, sometimes more than once, has always got the phone going. The slot stays healthy (`fastboot getvar all` shows `slot-successful:a:yes`, `slot-unbootable:a:no`), and the failed attempt leaves no boot reason in Android. The cause is not known yet. `scripts/kgdb-attach.py` detects it and runs `fastboot reboot` for you.
 - **Rebooting straight after Android has booted can leave the phone stuck in recovery.** When Android finishes booting, it sets up a zram swap file in `/data/per_boot`, a directory it deletes and recreates on every boot. A reboot during that setup appears to leave the file behind (the exact window is not known), and on the next boot the cleanup is not allowed to delete it (`avc: denied { getattr } for comm="rm" path="/data/per_boot/..." tcontext=u:object_r:zram_data_file`). `init` then cannot set the directory up (`Failed to set encryption policy of /data/per_boot`), reboots into recovery, and recovery asks for a factory reset. "Try again" only repeats the same failure, so the factory reset is the way out; it keeps the flashed kernel, but wipes the phone's data and turns USB debugging off. It happened once in this project, during a loop that rebooted the phone as soon as each boot completed. Leave the phone at least a minute after it boots before rebooting it; `scripts/kgdb-attach.py --boot` waits for that itself.
-- **A crash reboots the phone instead of stopping in kgdb.** GKI is built with `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so gdb never sees them. See the [Kleaf patch's limits](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#limits).
+- **A crash freezes the phone until gdb attaches.** With `kgdb_catch_crashes=1`, an oops or a panic waits in kgdb, even with no host connected. Attach with `scripts/kgdb-attach.py --now`, then `detach` to let it reboot, or hold Volume Down + Power. Remove the parameter from `DEBUG_CMDLINE` in `scripts/package.sh` for a phone that should reboot on its own.
+- **Crashes in the first 5 seconds of boot still reboot the phone.** kgdb cannot stop before the USB serial port is up. Read the crash afterwards with `adb shell dumpsys dropbox --print SYSTEM_LAST_KMSG`.
 
 ## Recovery
 

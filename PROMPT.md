@@ -8,7 +8,7 @@ A debug build of the Pixel 6 (`oriole`) kernel that runs **kgdb over the USB cab
 
 - Kernel: GKI 6.1 (`6.1.124-android14-11`), branch `android-gs-raviole-6.1-android16`, pinned in `manifest/pinned.xml`.
 - Android: the stock factory image `oriole-cp1a.260405.005`, with only the kernel partitions replaced.
-- The patches add polled I/O to the USB gadget serial driver so kgdb can use it, add a kgdb serial port without root (`kgdb_acm`), keep the gs101 watchdogs from resetting a stopped kernel, and let gdb stop a running kernel by connecting or by Ctrl+C.
+- The patches add polled I/O to the USB gadget serial driver so kgdb can use it, add a kgdb serial port without root (`kgdb_acm`), keep the gs101 watchdogs from resetting a stopped kernel, let gdb stop a running kernel by connecting or by Ctrl+C, and stop the kernel in kgdb when it crashes.
 
 ## Layout
 
@@ -50,7 +50,7 @@ Unless told otherwise, assume the README has been followed: the kernel tree is s
 
 ```bash
 adb shell uname -r                                    # 6.1.124-android14-11
-adb shell cat /proc/cmdline | tr ' ' '\n' | grep kgdb # kgdb_acm, kgdboc=ttyGS3
+adb shell cat /proc/cmdline | tr ' ' '\n' | grep kgdb # kgdb_acm, kgdboc=ttyGS3, kgdb_catch_crashes=1
 ls -l /dev/ttyACM0
 ```
 
@@ -64,6 +64,7 @@ Build, package and flash commands are in the README's Build, Package and Flash s
 | Ctrl+C | In an attached gdb, after `continue` | Within about 2 seconds |
 | At boot | `scripts/kgdb-attach.py --boot` | About 5 seconds into boot, when the USB port comes up |
 | Fixed time | `kgdb_break_after=<seconds>` added to `DEBUG_CMDLINE` in `scripts/package.sh`, then package and flash | At that uptime, every boot |
+| Crash | Nothing to do: an oops or panic stops in kgdb (`kgdb_catch_crashes=1`); attach with `scripts/kgdb-attach.py --now` | At the crash |
 | Reattach | `scripts/kgdb-attach.py --now` | Attaches without checks, for a kernel already stopped |
 
 Nothing before the USB port comes up (about 4 to 5 seconds into boot) can be debugged.
@@ -110,7 +111,13 @@ An interactive terminal is best (the README's demo was recorded that way). Witho
 
 ## Investigating crashes
 
-kgdb does **not** catch oopses or panics here: GKI sets `PANIC_TIMEOUT=-1` and Android sets `panic_on_oops`, so a crash reboots the phone. To investigate one after the fact, without root:
+With `kgdb_catch_crashes=1` on the command line (set by `scripts/package.sh`, see [aosp 0007](docs/aosp/0007-kgdb-stop-on-oopses-and-panics-with-kgdb_catch_crash.md)), an oops or a panic stops in kgdb instead of rebooting, once the USB serial port is up (about 5 seconds into boot). The phone then looks frozen and adb hangs, but `/dev/ttyACM0` is still there; `scripts/kgdb-attach.py` reports exactly that and suggests `--now`. Attach with `--now` and inspect:
+
+- An oops stops at the faulting instruction (gdb reports `SIGSEGV`); `bt`, `info registers` and `print` work as usual.
+- A panic stops in `kgdb_panic()` called from `panic()`; `bt` shows the caller, and `kgdb_panic()`'s `msg` argument holds the panic message.
+- The crash is still fatal: `continue` or `detach` lets the panic go on and the phone reboots (`sys.boot.reason` is then `kernel_panic,...`). An oops stops only once, not again at the panic that follows it.
+
+Crashes before the port is up reboot the phone as before. To investigate one after the fact, without root:
 
 ```bash
 adb shell getprop sys.boot.reason            # e.g. kernel_panic,oops:_fatal_exception
@@ -118,9 +125,9 @@ adb shell getprop persist.sys.boot.reason.history
 adb shell dumpsys dropbox --print SYSTEM_LAST_KMSG > last_kmsg.txt
 ```
 
-`SYSTEM_LAST_KMSG` holds the tail of the crashed boot's kernel log, including the oops, registers and call trace. Symbolise kernel addresses with `kernel/out/raviole/dist/System.map` or `gdb vmlinux` (`info symbol 0x...`, `list *0x...`). Addresses above `_end` in `System.map` are in module space. The kernel log of the running boot is not readable from the adb shell on this user build; read it through gdb if needed.
+`SYSTEM_LAST_KMSG` holds the tail of the crashed boot's kernel log, including the oops, registers and call trace. Symbolise kernel addresses with `kernel/out/raviole/dist/System.map` or `gdb vmlinux` (`info symbol 0x...`, `list *0x...`). Addresses above `_end` in `System.map` are in module space. The kernel log of the running boot is not readable from the adb shell on this user build; read it through gdb if needed (`lx-dmesg`, slow).
 
-To catch a bug live, set a breakpoint on the code path before it crashes. Breakpoints are handled by kgdb even though the crash itself is not; a breakpoint on `die` or `panic` should therefore stop the kernel before it reboots, but that has not been tested.
+To reproduce a crash on purpose, attach and run `set var $pc = 0`, then `detach`: the kernel faults on the jump and stops (README, Catching a crash).
 
 ## Known issues
 
@@ -128,6 +135,7 @@ See the README's Known issues for details.
 
 - **Check `sys.boot.reason` before blaming a change on a reboot.** A crash about a second into some boots, from a bug in the stock display driver, was fixed by the `display/samsung` patch; its [doc](docs/private/google-modules/display/samsung/0001-drm-samsung-dqe-keep-the-dqe-class-name-alive.md) shows how that crash was tracked down without kgdb, which cannot attach that early.
 - **Leave the phone at least a minute after each boot before rebooting it.** Rebooting straight after Android boots can leave a zram swap file in `/data/per_boot` that the next boot cannot delete; Android then reboots into recovery on every boot, and only a factory reset (which the user must approve) gets it out. Space out any reboot loop, for example by waiting until `/proc/uptime` passes 90 seconds and `getprop init.svc.mmd_setup` is not `running`.
+- **A crash freezes the phone until gdb attaches.** With `kgdb_catch_crashes=1`, adb hanging while `/dev/ttyACM0` is present after a crash is expected, not a hang to recover with the buttons: attach with `scripts/kgdb-attach.py --now`, inspect, then `detach` to let it reboot. Crash the kernel on purpose only once it has been up at least 90 seconds, for the `/data/per_boot` reason above.
 - **A reboot sometimes ends in the bootloader.** Run `fastboot reboot` again; `kgdb-attach.py` does this itself.
 - **Untested:** system suspend with the kgdb port's request always queued, changing the USB mode (rebinding the gadget) while kgdb is in use, and unplugging the cable while the kernel is stopped.
 

@@ -1,0 +1,76 @@
+From 43990295258bba0b156b0cdb2f843a4f9bf4a6b7 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Mon, 12 Oct 2026 05:59:52 -0400
+Subject: [PATCH 7/7] kgdb: stop on oopses and panics with kgdb_catch_crashes=
+
+kgdb ignores oopses and panics whenever panic_timeout is non-zero, so
+that a system meant to reboot on panic does not wait for a debugger.
+GKI sets PANIC_TIMEOUT=-1, so on GKI kernels a crash always reboots,
+even with gdb ready on the other end.
+
+Add kgdb_catch_crashes=1, which lets kgdb stop on an oops or a panic
+whatever panic_timeout says, once an I/O driver is registered. It
+enters the gdb stub rather than the kdb shell. An oops stops once, at
+the fault, not again at the panic that follows it. When gdb continues
+or detaches, the panic goes on and, with a non-zero panic_timeout,
+reboots as before.
+
+Without kgdb_catch_crashes= nothing changes.
+---
+ kernel/debug/debug_core.c | 24 ++++++++++++++++++++++--
+ 1 file changed, 22 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/debug/debug_core.c b/kernel/debug/debug_core.c
+index 3a904d869..ce90f5510 100644
+--- a/kernel/debug/debug_core.c
++++ b/kernel/debug/debug_core.c
+@@ -94,6 +94,16 @@ int dbg_kdb_mode = 1;
+ module_param(kgdb_use_con, int, 0644);
+ module_param(kgdbreboot, int, 0644);
+ 
++/*
++ * kgdb_catch_crashes=1 stops in the gdb stub on an oops or a panic even
++ * when panic_timeout asks for a reboot, as GKI's PANIC_TIMEOUT=-1 does.
++ * Once gdb continues or detaches, the panic goes on and, with a non-zero
++ * panic_timeout, reboots. An oops stops once, not again at its panic.
++ */
++static bool kgdb_catch_crashes;
++static bool kgdb_caught_oops;
++core_param(kgdb_catch_crashes, kgdb_catch_crashes, bool, 0644);
++
+ /*
+  * Holds information about breakpoints in a kernel. These breakpoints are
+  * added and removed by gdb.
+@@ -847,8 +857,13 @@ kgdb_handle_exception(int evector, int signo, int ecode, struct pt_regs *regs)
+ 	 * reboot on panic. We don't want to get stuck waiting for input
+ 	 * on such systems, especially if its "just" an oops.
+ 	 */
+-	if (signo != SIGTRAP && panic_timeout)
++	if (signo != SIGTRAP && panic_timeout && !kgdb_catch_crashes)
+ 		return 1;
++	if (signo != SIGTRAP && kgdb_catch_crashes && kgdb_io_module_registered) {
++		/* Enter the gdb stub, not the kdb shell gdb cannot talk to. */
++		dbg_kdb_mode = 0;
++		kgdb_caught_oops = true;
++	}
+ 
+ 	memset(ks, 0, sizeof(struct kgdb_state));
+ 	ks->cpu			= raw_smp_processor_id();
+@@ -1003,8 +1018,13 @@ void kgdb_panic(const char *msg)
+ 	 * "panic_timeout" indicates the system should automatically
+ 	 * reboot on panic.
+ 	 */
+-	if (panic_timeout)
++	if (panic_timeout && !kgdb_catch_crashes)
+ 		return;
++	if (kgdb_catch_crashes) {
++		if (kgdb_caught_oops)
++			return;
++		dbg_kdb_mode = 0;
++	}
+ 
+ 	debug_locks_off();
+ 	console_flush_on_panic(CONSOLE_FLUSH_PENDING);
+-- 
+2.53.0
+
