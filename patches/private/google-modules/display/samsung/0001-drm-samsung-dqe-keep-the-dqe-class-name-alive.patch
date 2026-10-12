@@ -1,0 +1,67 @@
+From 3420746cdc84ef63139ad00ce09a7dd398b1a464 Mon Sep 17 00:00:00 2001
+From: Dom <dominic.ck.wang@protonmail.com>
+Date: Sun, 11 Oct 2026 13:15:58 -0400
+Subject: [PATCH] drm: samsung: dqe: keep the dqe class name alive
+
+exynos_dqe_register() formats the class name, "dqe<n>", into an array on
+its own stack and passes it to class_create(), which stores the pointer
+rather than a copy. Once the function returns the name points into a
+dead stack frame, and with VMAP_STACK, into an unmapped page once the
+thread that probed the display has exited.
+
+Anything that reads the class name afterwards then faults. On a Pixel 6
+that is ueventd's coldboot about a second into boot: writing "add" to
+/sys/devices/platform/1c300000.drmdecon/dqe0/atc/uevent formats
+SUBSYSTEM=dqe0 from the dead pointer and oopses, and the phone panics
+and reboots. Whether the probing thread is gone by then varies, so it
+happens on some boots only, about one in six.
+
+Allocate the name with kasprintf() instead. The class is never
+destroyed, so neither is the name.
+---
+ exynos_drm_dqe.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/exynos_drm_dqe.c b/exynos_drm_dqe.c
+index d08a62c..267e603 100644
+--- a/exynos_drm_dqe.c
++++ b/exynos_drm_dqe.c
+@@ -1507,7 +1507,6 @@ static enum dqe_version exynos_get_dqe_version(void)
+ 	return dqe_ver;
+ }
+ 
+-#define MAX_DQE_NAME_SIZE 10
+ struct exynos_dqe *exynos_dqe_register(struct decon_device *decon)
+ {
+ 	struct resource res;
+@@ -1516,7 +1515,7 @@ struct exynos_dqe *exynos_dqe_register(struct decon_device *decon)
+ 	struct exynos_dqe *dqe;
+ 	enum dqe_version dqe_version;
+ 	int i;
+-	char dqe_name[MAX_DQE_NAME_SIZE] = "dqe";
++	const char *dqe_name;
+ 
+ 	i = of_property_match_string(np, "reg-names", "dqe");
+ 	if (i < 0) {
+@@ -1561,10 +1560,17 @@ struct exynos_dqe *exynos_dqe_register(struct decon_device *decon)
+ 	spin_lock_init(&dqe->state.histogram_slock);
+ 	INIT_LIST_HEAD(&dqe->state.hist_pending_events_list);
+ 
+-	scnprintf(dqe_name, MAX_DQE_NAME_SIZE, "dqe%u", decon->id);
++	/*
++	 * class_create() keeps the name pointer rather than a copy, so the
++	 * name must live as long as the class, which is never destroyed.
++	 */
++	dqe_name = kasprintf(GFP_KERNEL, "dqe%u", decon->id);
++	if (!dqe_name)
++		return NULL;
+ 	dqe->dqe_class = class_create(THIS_MODULE, dqe_name);
+ 	if (IS_ERR(dqe->dqe_class)) {
+ 		pr_err("failed to create dqe class\n");
++		kfree(dqe_name);
+ 		return NULL;
+ 	}
+ 
+-- 
+2.53.0
+

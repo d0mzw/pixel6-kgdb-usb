@@ -126,7 +126,8 @@ To catch a bug live, set a breakpoint on the code path before it crashes. Breakp
 
 See the README's Known issues for details.
 
-- **About 1 boot in 6 crashes** about a second in, in `ueventd` formatting a device's `SUBSYSTEM=` from unmapped module memory; the phone restarts by itself. It happens with and without the break-in patch; the module responsible is not known. Check `sys.boot.reason` before blaming a change on a reboot.
+- **Check `sys.boot.reason` before blaming a change on a reboot.** A crash about a second into some boots, from a bug in the stock display driver, was fixed by the `display/samsung` patch; its [doc](docs/private/google-modules/display/samsung/0001-drm-samsung-dqe-keep-the-dqe-class-name-alive.md) shows how that crash was tracked down without kgdb, which cannot attach that early.
+- **Leave the phone at least a minute after each boot before rebooting it.** Rebooting straight after Android boots can leave a zram swap file in `/data/per_boot` that the next boot cannot delete; Android then reboots into recovery on every boot, and only a factory reset (which the user must approve) gets it out. Space out any reboot loop, for example by waiting until `/proc/uptime` passes 90 seconds and `getprop init.svc.mmd_setup` is not `running`.
 - **A reboot sometimes ends in the bootloader.** Run `fastboot reboot` again; `kgdb-attach.py` does this itself.
 - **Untested:** system suspend with the kgdb port's request always queued, changing the USB mode (rebinding the gadget) while kgdb is in use, and unplugging the cable while the kernel is stopped.
 

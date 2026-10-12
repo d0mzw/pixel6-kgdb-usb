@@ -178,9 +178,34 @@ def check_phone(release, port, timeout):
             "on its own that long after boot")
 
 
+# Rebooting just after Android has booted can leave a zram swap file in
+# /data/per_boot that the next boot cannot delete; Android then reboots
+# into recovery on every boot and asks for a factory reset (README, Known
+# issues). Do not reboot before this much uptime.
+MIN_UPTIME = 60
+
+
+def wait_until_settled():
+    """Wait until Android has finished its post-boot setup, so that a
+    reboot is safe."""
+    while True:
+        uptime = adb("shell", "cat", "/proc/uptime")
+        booted = adb("shell", "getprop", "sys.boot_completed") == "1"
+        setup = adb("shell", "getprop", "init.svc.mmd_setup")
+        if uptime is None:
+            fail("adb stopped answering while waiting to reboot")
+        up = float(uptime.split()[0])
+        if booted and setup != "running" and up >= MIN_UPTIME:
+            return
+        log(f"phone uptime {up:.0f} s; waiting until Android has settled "
+            f"(at least {MIN_UPTIME} s) before rebooting")
+        time.sleep(max(2, min(MIN_UPTIME - up, 10)))
+
+
 def reboot_to_port(port, timeout):
     """Reboot the phone and wait for its kgdb port to come back, which
     happens a few seconds into boot, well before Android has booted."""
+    wait_until_settled()
     log("rebooting the phone")
     if adb("reboot", timeout=20) is None:
         fail("adb reboot failed")
@@ -235,8 +260,12 @@ def wait_for_port(port, timeout=20):
         if time.monotonic() - start > timeout:
             fail(f"{port} did not appear; is the phone connected?")
         time.sleep(0.5)
-    if not os.access(port, os.R_OK | os.W_OK):
-        fail(f"no permission to open {port}; add the udev rule (README, Debug)")
+    # A port that has just appeared may not have the udev rule's mode yet.
+    start = time.monotonic()
+    while not os.access(port, os.R_OK | os.W_OK):
+        if time.monotonic() - start > 5:
+            fail(f"no permission to open {port}; add the udev rule (README, Debug)")
+        time.sleep(0.1)
     log(f"serial port {port} is ready")
 
 

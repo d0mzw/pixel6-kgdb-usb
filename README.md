@@ -331,6 +331,7 @@ Each patch belongs to one project inside `kernel/` and is stored under the same 
 | `aosp` | [0005](docs/aosp/0005-scripts-gdb-symbols-use-a-raw-string-for-the-module-.md) | Silences a Python warning in the gdb scripts |
 | `aosp` | [0006](docs/aosp/0006-usb-gadget-u_serial-break-into-kgdb-when-gdb-sends-t.md) | Stops the running kernel when gdb connects or sends Ctrl+C |
 | `private/devices/google/gs101` | [0001](docs/private/devices/google/gs101/0001-gs101-dts-keep-the-watchdogs-from-resetting-a-kgdb-s.md) | Device tree: watchdogs do not reset a stopped kernel |
+| `private/google-modules/display/samsung` | [0001](docs/private/google-modules/display/samsung/0001-drm-samsung-dqe-keep-the-dqe-class-name-alive.md) | Display driver: fixes a crash about a second into some boots |
 | `private/google-modules/soc/gs` | [0001](docs/private/google-modules/soc/gs/0001-soc-gs-keep-the-watchdogs-from-resetting-a-kgdb-stop.md) | Watchdog drivers: same, in code |
 
 Apply them all:
@@ -356,6 +357,9 @@ Applying: kleaf: kgdb: enable kgdb over the USB serial console
 == private/devices/google/gs101
 Starting kgdb: 100% (1/1), done in 0.007s
 Applying: gs101: dts: keep the watchdogs from resetting a kgdb stop
+== private/google-modules/display/samsung
+Starting kgdb: 100% (1/1), done in 0.007s
+Applying: drm: samsung: dqe: keep the dqe class name alive
 == private/google-modules/soc/gs
 Starting kgdb: 100% (1/1), done in 0.007s
 Applying: soc: gs: keep the watchdogs from resetting a kgdb stop
@@ -365,11 +369,11 @@ The `Starting kgdb` lines are `repo`'s progress output, and the time on them var
 
 If a patch does not apply, the script stops there. `git -C kernel/<project> am --abort` backs out the failed patch; then check that the sync used `manifest/pinned.xml`. Before running the script again, start over as below, because it would otherwise try to apply the patches that already went in.
 
-To start over from unpatched source, put the four projects back on their pinned commits and delete the branches:
+To start over from unpatched source, put the five projects back on their pinned commits and delete the branches:
 
 ```bash
 cd kernel
-~/bin/repo forall build/kernel aosp private/devices/google/gs101 private/google-modules/soc/gs -c 'git checkout -q --detach "$REPO_LREV" && git branch -D kgdb'
+~/bin/repo forall build/kernel aosp private/devices/google/gs101 private/google-modules/display/samsung private/google-modules/soc/gs -c 'git checkout -q --detach "$REPO_LREV" && git branch -D kgdb'
 cd ..
 ```
 
@@ -603,7 +607,7 @@ gdb's first packet stops the running kernel ([aosp 0006](docs/aosp/0006-usb-gadg
 | Command | What it does |
 | --- | --- |
 | `scripts/kgdb-attach.py` | Stops the running kernel and attaches |
-| `scripts/kgdb-attach.py --boot` | Reboots the phone and stops the kernel as soon as its USB port is up, about 5 seconds into boot. If the phone stops in the bootloader instead (see [Known issues](#known-issues)), it runs `fastboot reboot`, up to three times. |
+| `scripts/kgdb-attach.py --boot` | Reboots the phone and stops the kernel as soon as its USB port is up, about 5 seconds into boot. If the phone booted less than a minute ago, it first waits (see [Known issues](#known-issues)). If the phone stops in the bootloader instead (see [Known issues](#known-issues)), it runs `fastboot reboot`, up to three times. |
 | `scripts/kgdb-attach.py --now` | Skips the checks and attaches straight away, for example to a kernel that is already stopped after gdb was closed without detaching |
 
 `--help` lists the other options.
@@ -793,7 +797,7 @@ Addresses, thread IDs and file names differ on every run.
 ## Known issues
 
 - **A reboot sometimes ends in the bootloader instead of Android.** It has happened after `fastboot reboot`, after `adb reboot`, and as `fastboot reboot fastboot` failing with `Failed to boot into userspace fastboot`. Running the same command again, sometimes more than once, has always got the phone going. The slot stays healthy (`fastboot getvar all` shows `slot-successful:a:yes`, `slot-unbootable:a:no`), and the failed attempt leaves no boot reason in Android. The cause is not known yet. `scripts/kgdb-attach.py` detects it and runs `fastboot reboot` for you.
-- **Some boots crash about a second in, and the phone restarts by itself.** In testing it was about 1 boot in 6, with the debug kernel from before the break-in patch as well as with this one. `ueventd`, which replays device events early in boot, hits an oops while formatting a device's `SUBSYSTEM=` value: the name it points to is in module memory that is no longer mapped. The next boot is normal, and `adb shell getprop sys.boot.reason` shows `kernel_panic,oops:_fatal_exception`. The module responsible is not known yet. With `scripts/kgdb-attach.py --boot`, such a boot only makes the port take longer to appear, about 35 seconds instead of 17.
+- **Rebooting straight after Android has booted can leave the phone stuck in recovery.** When Android finishes booting, it sets up a zram swap file in `/data/per_boot`, a directory it deletes and recreates on every boot. A reboot during that setup appears to leave the file behind (the exact window is not known), and on the next boot the cleanup is not allowed to delete it (`avc: denied { getattr } for comm="rm" path="/data/per_boot/..." tcontext=u:object_r:zram_data_file`). `init` then cannot set the directory up (`Failed to set encryption policy of /data/per_boot`), reboots into recovery, and recovery asks for a factory reset. "Try again" only repeats the same failure, so the factory reset is the way out; it keeps the flashed kernel, but wipes the phone's data and turns USB debugging off. It happened once in this project, during a loop that rebooted the phone as soon as each boot completed. Leave the phone at least a minute after it boots before rebooting it; `scripts/kgdb-attach.py --boot` waits for that itself.
 - **A crash reboots the phone instead of stopping in kgdb.** GKI is built with `PANIC_TIMEOUT=-1`, and kgdb ignores oopses and panics when the panic timeout is non-zero, so gdb never sees them. See the [Kleaf patch's limits](docs/build/kernel/0001-kleaf-kgdb-enable-kgdb-over-the-USB-serial-console.md#limits).
 
 ## Recovery
